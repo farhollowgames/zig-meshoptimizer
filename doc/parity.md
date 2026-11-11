@@ -6,12 +6,14 @@ says how that is checked.
 
 ## Additions
 
-- **Vector forms of `quantizeUnorm` and `quantizeSnorm`.** Both also take
-  a `@Vector` of `f32` and give a vector of integers, each lane as the
-  scalar form gives it. Zig 0.17 does not vectorize a loop of scalar calls
-  on its own, where C++ compilers vectorize the original's loop, so code
-  that quantizes arrays needs the vector form to run at the original's
-  speed.
+- **`quantizeUnorm` and `quantizeSnorm` also take vectors.** The same
+  function takes an `f32`, giving an integer as the original's does, or a
+  `@Vector` of `f32`, giving a vector of integers with each lane as the
+  scalar call gives it; any other type is a compile error. Zig 0.17 does
+  not vectorize a loop of scalar calls on its own, where C++ compilers
+  vectorize the original's loop, so code that quantizes arrays passes
+  vectors to run at the original's speed
+  ([BENCHMARKS.md](BENCHMARKS.md#slower-rows)).
 - **`clusterlod`** is the original's `demo/clusterlod.h`, a header the
   original ships as a demo, ported with the library.
 - **`-Dfuzz-seed`** shifts every fuzz test's seeds, for new cases.

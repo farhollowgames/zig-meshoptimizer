@@ -37,10 +37,10 @@ Farhollow Games, and has not yet been reviewed by a person.
 ## Install
 
 ```sh
-zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#main
+zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#v0.1.0
 ```
 
-There is no release tag yet. Then, in `build.zig`:
+Then, in `build.zig`:
 
 ```zig
 const meshoptimizer = b.dependency("meshoptimizer", .{ .target = target, .optimize = optimize });
@@ -90,7 +90,8 @@ const positions: meshopt.VertexFloats = .fromField(Vertex, "position", vertices)
 [`doc/parity.md`](doc/parity.md) gives the reasons.
 
 *Additions*
-- `quantizeUnorm` and `quantizeSnorm` also take vectors of floats.
+- `quantizeUnorm` and `quantizeSnorm` take a vector of floats as well as
+  one float.
 - `clusterlod`, the original's demo library, is part of the package.
 
 *Changes to expect*
@@ -134,10 +135,10 @@ triangles, the median of three runs (below 1, the port takes less time):
 
 Over all 218 benchmark cases the port's time is at most 1.05 of the
 original's in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
-called in a loop (4.9 and 5.1), which Zig does not vectorize; their vector
-forms take 1.00. AMD Ryzen 9 9950X3D, one core, Linux 7.3.3, Zig 0.17.0
-ReleaseFast against clang 22.1.8 `-O3`, measured while other builds ran on
-the machine.
+called on one float at a time in a loop (4.9 and 5.1), which Zig does not
+vectorize; called on vectors of 16 floats they take 1.00. AMD Ryzen 9
+9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against clang
+22.1.8 `-O3`, measured while other builds ran on the machine.
 
 - [`doc/TESTING.md`](doc/TESTING.md): how the tests compare the port with
   the original, and what this repository's tests cover.

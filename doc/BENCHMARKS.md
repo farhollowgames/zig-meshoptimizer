@@ -315,10 +315,13 @@ Over all 218 cases, the port's time is at most 1.05 of the original's in
 Cases where the port's time is more than 1.05 of the original's:
 
 - **`quantizeUnorm` and `quantizeSnorm` as a loop of calls (4.85 and
-  5.12).** These are inline functions; clang vectorizes the C++ loop that
-  calls them into 16-lane AVX-512 code, and Zig 0.17 vectorizes no loop by
-  itself, so the Zig loop stays scalar. Called on vectors of 16 floats,
-  which the port adds, they take 1.00 of the original's time.
+  5.12).** These are inline functions in the original's header. Clang at
+  `-O3` vectorizes a C++ caller's loop of scalar calls into 16-lane
+  AVX-512 code; Zig 0.17 does not auto-vectorize a caller's loop, so the
+  same loop in Zig stays scalar. The port's function takes a vector of
+  floats as well as one float, with the same body working lane by lane, so
+  callers that want speed pass vectors: the `x16` rows call it on vectors
+  of 16 floats, against the original's loop, and take 1.00 of its time.
 - **Vertex hashing with sizes known only at run time:**
   `generateVertexRemapMulti` (1.07 and 1.09), `filterIndexBuffer` and
   `filterIndexBufferMulti` on the sphere (1.13 and 1.08). The port

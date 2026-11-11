@@ -48,8 +48,16 @@ pub fn quantizeSnorm(value: anytype, bits: u5) Lanes(@TypeOf(value), i32) {
     return @intFromFloat(clamped * scale + round);
 }
 
-/// `f32` for a scalar `T`, and a vector of `f32` as long as a vector `T`.
+/// `f32` for a scalar `T`, and a vector of `f32` as long as a vector `T`;
+/// a `T` that is neither an `f32`, a vector of them nor a literal is a
+/// compile error.
 fn Floats(comptime T: type) type {
+    const accepted = switch (@typeInfo(T)) {
+        .vector => |vector| vector.child == f32,
+        .comptime_float, .comptime_int => true,
+        else => T == f32,
+    };
+    if (!accepted) @compileError("expected an f32 or a vector of f32, found " ++ @typeName(T));
     return switch (@typeInfo(T)) {
         .vector => |vector| @Vector(vector.len, f32),
         else => f32,

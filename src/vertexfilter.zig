@@ -790,11 +790,7 @@ pub fn encodeFilterQuat(destination: []u8, stride: usize, bits: u5, data: []cons
     const out = std.mem.bytesAsSlice(i16, destination[0 .. count * 8]);
     const scaler = @sqrt(@as(f32, 2));
 
-    // quantizeSnorm's steps on a quaternion's four lanes at once.
     const Quat = @Vector(4, f32);
-    const scale: Quat = @splat(@floatFromInt((@as(i32, 1) << (bits - 1)) - 1));
-    const one: Quat = @splat(1);
-    const half: Quat = @splat(0.5);
     const top: i16 = @truncate(quantization.quantizeSnorm(1, bits) & ~@as(i32, 3));
 
     for (0..count) |i| {
@@ -823,10 +819,7 @@ pub fn encodeFilterQuat(destination: []u8, stride: usize, bits: u5, data: []cons
         };
         const v = rotated * @as(Quat, @splat(scaler)) * sign;
 
-        const round = @select(f32, v >= @as(Quat, @splat(0)), half, -half);
-        var clamped = @select(f32, v >= -one, v, -one);
-        clamped = @select(f32, clamped <= one, clamped, one);
-        const quantized: @Vector(4, i32) = @intFromFloat(clamped * scale + round);
+        const quantized = quantization.quantizeSnorm(v, bits);
 
         const d: [4]i16 = @as(@Vector(4, i16), @truncate(quantized));
         out[i * 4 ..][0..4].* = .{ d[0], d[1], d[2], top | qc };

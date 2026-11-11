@@ -904,7 +904,7 @@ const QuantizeCase = struct {
         quantizeFloat,
         quantizeUnorm,
         quantizeSnorm,
-        /// The vector forms, 16 values a call, against the original's loop.
+        /// The same functions called on vectors of 16 floats, against the original's loop.
         @"quantizeUnorm x16",
         @"quantizeSnorm x16",
         computePositionExponent,

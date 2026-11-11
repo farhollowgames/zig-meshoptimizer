@@ -102,6 +102,10 @@ Specifics:
       -Dtest-filter=meshletcodec -Dtest-filter=clusterizer
   ```
 
+  QEMU was not installed on the machine the release was checked on, so
+  for this release the NEON paths are covered by the repository's CI
+  workflow only, not by a local run.
+
   There C's undefined float-to-integer conversions, which the original's
   aarch64 build saturates and the port computes as on x86, are left out of
   the scalar comparisons ([parity](parity.md)).
