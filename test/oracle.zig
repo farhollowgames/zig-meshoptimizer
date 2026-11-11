@@ -12,4 +12,8 @@ comptime {
     _ = @import("rasterizer_test.zig");
     _ = @import("stripifier_test.zig");
     _ = @import("spatialorder_test.zig");
+    _ = @import("vcacheoptimizer_test.zig");
+    _ = @import("clusterizer_test.zig");
+    _ = @import("meshletutils_test.zig");
+    _ = @import("partition_test.zig");
 }

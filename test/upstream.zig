@@ -162,6 +162,23 @@ pub extern fn meshopt_optimizeVertexCache(
     index_count: usize,
     vertex_count: usize,
 ) void;
+/// vcacheoptimizer.cpp's `meshopt::VertexScoreTable`.
+pub const VertexScoreTable = extern struct {
+    cache: [17]f32,
+    live: [9]f32,
+};
+
+/// vcacheoptimizer.cpp exports this without declaring it in the header, so
+/// it has C++ linkage: this is its Itanium ABI name.
+pub extern fn _Z32meshopt_optimizeVertexCacheTablePjPKjmmPKN7meshopt16VertexScoreTableE(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    table: *const VertexScoreTable,
+) void;
+pub const meshopt_optimizeVertexCacheTable =
+    _Z32meshopt_optimizeVertexCacheTablePjPKjmmPKN7meshopt16VertexScoreTableE;
 pub extern fn meshopt_optimizeVertexCacheStrip(
     destination: ?[*]u32,
     indices: ?[*]const u32,

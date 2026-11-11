@@ -245,6 +245,63 @@ pub fn main(init: std.process.Init) !void {
         bench.run("generateTessellationIndexBuffer " ++ name, &tessellation_case);
     }
 
+    // The vertex cache, meshlet and partition functions on the indexed meshes.
+
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 1M", big } }) |named| {
+        const name = named[0];
+        const mesh: meshes.Mesh = named[1];
+        var vcache_case: VertexCacheCase = try .init(arena, bench.gpa, mesh, .default);
+        bench.run("optimizeVertexCache " ++ name, &vcache_case);
+        var strip_case: VertexCacheCase = try .init(arena, bench.gpa, mesh, .strip);
+        bench.run("optimizeVertexCacheStrip " ++ name, &strip_case);
+        var fifo_case: VertexCacheCase = try .init(arena, bench.gpa, mesh, .fifo);
+        bench.run("optimizeVertexCacheFifo " ++ name, &fifo_case);
+
+        // The meshlet cases take the cache-ordered indices, as a bake does;
+        // the filter may have skipped the case that orders them.
+        vcache_case.original();
+        const ordered: meshes.Mesh = .{
+            .vertices = mesh.vertices,
+            .indices = vcache_case.destination,
+        };
+        const builders = .{
+            .{ "buildMeshlets ", .standard },
+            .{ "buildMeshletsScan ", .scan },
+            .{ "buildMeshletsFlex ", .flex },
+            .{ "buildMeshletsSpatial ", .spatial },
+        };
+        inline for (builders) |builder| {
+            var builder_case: MeshletsCase = try .init(arena, bench.gpa, ordered, builder[1]);
+            bench.run(builder[0] ++ name, &builder_case);
+        }
+
+        var meshlets_case: MeshletsCase = try .init(arena, bench.gpa, ordered, .standard);
+        meshlets_case.original();
+        var optimize_case: OptimizeMeshletCase = try .init(arena, &meshlets_case, 0);
+        bench.run("optimizeMeshlet " ++ name, &optimize_case);
+        var level_case: OptimizeMeshletCase = try .init(arena, &meshlets_case, 3);
+        bench.run("optimizeMeshletLevel 3 " ++ name, &level_case);
+
+        const clusters: Clusters = try .init(arena, &meshlets_case);
+        var bounds_case: MeshletBoundsCase = .{ .built = &meshlets_case, .mesh = ordered };
+        bench.run("computeMeshletBounds " ++ name, &bounds_case);
+        var cluster_case: ClusterBoundsCase = .{ .clusters = &clusters, .mesh = ordered };
+        bench.run("computeClusterBounds " ++ name, &cluster_case);
+        var extract_case: ExtractCase = .{ .clusters = &clusters };
+        bench.run("extractMeshletIndices " ++ name, &extract_case);
+        var points_case: SphereBoundsCase = try .init(arena, mesh, false);
+        bench.run("computeSphereBounds points " ++ name, &points_case);
+        var spheres_case: SphereBoundsCase = try .init(arena, mesh, true);
+        bench.run("computeSphereBounds spheres " ++ name, &spheres_case);
+        var partition_case: PartitionCase = .{
+            .gpa = bench.gpa,
+            .vertices = mesh.vertices,
+            .clusters = &clusters,
+            .destination = try arena.alloc(u32, clusters.counts.len),
+        };
+        bench.run("partitionClusters " ++ name, &partition_case);
+    }
+
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
     std.debug.print("{s:<44} {d:>10.1} {s:>6} {d:>10.1} {s:>6} {d:>6.2}\n", .{
@@ -1264,5 +1321,454 @@ const PatchCase = struct {
             ),
         };
         done catch unreachable;
+    }
+};
+
+/// Every vertex's floats, positions first.
+fn positionsOf(vertices: []const Vertex) mo.VertexFloats {
+    const stride = @sizeOf(Vertex) / @sizeOf(f32);
+    const floats: [*]const f32 = @ptrCast(vertices.ptr);
+    return .init(floats[0 .. vertices.len * stride], stride);
+}
+
+const VertexCacheCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: meshes.Mesh,
+    destination: []u32,
+    kind: Kind,
+
+    const Kind = enum { default, strip, fifo };
+    const cache_size = 16;
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: meshes.Mesh,
+        kind: Kind,
+    ) !VertexCacheCase {
+        const destination = try arena.alloc(u32, mesh.indices.len);
+        return .{ .gpa = gpa, .mesh = mesh, .destination = destination, .kind = kind };
+    }
+
+    fn original(self: *VertexCacheCase) void {
+        const d = self.destination.ptr;
+        const i = self.mesh.indices;
+        const n = self.mesh.vertices.len;
+        switch (self.kind) {
+            .default => c.meshopt_optimizeVertexCache(d, i.ptr, i.len, n),
+            .strip => c.meshopt_optimizeVertexCacheStrip(d, i.ptr, i.len, n),
+            .fifo => c.meshopt_optimizeVertexCacheFifo(d, i.ptr, i.len, n, cache_size),
+        }
+        std.mem.doNotOptimizeAway(self.destination);
+    }
+
+    fn port(self: *VertexCacheCase) void {
+        const d = self.destination;
+        const i = self.mesh.indices;
+        const n = self.mesh.vertices.len;
+        const done = switch (self.kind) {
+            .default => mo.optimizeVertexCache(self.gpa, d, i, n),
+            .strip => mo.optimizeVertexCacheStrip(self.gpa, d, i, n),
+            .fifo => mo.optimizeVertexCacheFifo(self.gpa, d, i, n, cache_size),
+        };
+        done catch unreachable;
+        std.mem.doNotOptimizeAway(self.destination);
+    }
+};
+
+const MeshletsCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: meshes.Mesh,
+    kind: Kind,
+    meshlets: []mo.Meshlet,
+    vertices: []u32,
+    triangles: []u8,
+    count: usize = 0,
+
+    const Kind = enum { standard, scan, flex, spatial };
+    const max_vertices = 64;
+    const max_triangles = 124;
+    const min_triangles = 64;
+    const cone_weight = 0.25;
+    const split_factor = 2;
+    const fill_weight = 0.5;
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: meshes.Mesh,
+        kind: Kind,
+    ) !MeshletsCase {
+        const n = mesh.indices.len;
+        const bound = mo.buildMeshletsBound(n, max_vertices, min_triangles);
+        return .{
+            .gpa = gpa,
+            .mesh = mesh,
+            .kind = kind,
+            .meshlets = try arena.alloc(mo.Meshlet, bound),
+            .vertices = try arena.alloc(u32, n),
+            .triangles = try arena.alloc(u8, n),
+        };
+    }
+
+    fn original(self: *MeshletsCase) void {
+        const i = self.mesh.indices;
+        const v = self.mesh.vertices;
+        const meshlets: [*]c.Meshlet = @ptrCast(self.meshlets.ptr);
+        const p: [*]const f32 = @ptrCast(v.ptr);
+        const stride = @sizeOf(Vertex);
+        self.count = switch (self.kind) {
+            .standard => c.meshopt_buildMeshlets(
+                meshlets,
+                self.vertices.ptr,
+                self.triangles.ptr,
+                i.ptr,
+                i.len,
+                p,
+                v.len,
+                stride,
+                max_vertices,
+                max_triangles,
+                0,
+            ),
+            .scan => c.meshopt_buildMeshletsScan(
+                meshlets,
+                self.vertices.ptr,
+                self.triangles.ptr,
+                i.ptr,
+                i.len,
+                v.len,
+                max_vertices,
+                max_triangles,
+            ),
+            .flex => c.meshopt_buildMeshletsFlex(
+                meshlets,
+                self.vertices.ptr,
+                self.triangles.ptr,
+                i.ptr,
+                i.len,
+                p,
+                v.len,
+                stride,
+                max_vertices,
+                min_triangles,
+                max_triangles,
+                cone_weight,
+                split_factor,
+            ),
+            .spatial => c.meshopt_buildMeshletsSpatial(
+                meshlets,
+                self.vertices.ptr,
+                self.triangles.ptr,
+                i.ptr,
+                i.len,
+                p,
+                v.len,
+                stride,
+                max_vertices,
+                min_triangles,
+                max_triangles,
+                fill_weight,
+            ),
+        };
+        self.keep();
+    }
+
+    fn port(self: *MeshletsCase) void {
+        const i = self.mesh.indices;
+        const positions = positionsOf(self.mesh.vertices);
+        self.count = switch (self.kind) {
+            .standard => mo.buildMeshlets(
+                self.gpa,
+                self.meshlets,
+                self.vertices,
+                self.triangles,
+                i,
+                positions,
+                max_vertices,
+                max_triangles,
+                0,
+            ),
+            .scan => mo.buildMeshletsScan(
+                self.gpa,
+                self.meshlets,
+                self.vertices,
+                self.triangles,
+                i,
+                self.mesh.vertices.len,
+                max_vertices,
+                max_triangles,
+            ),
+            .flex => mo.buildMeshletsFlex(
+                self.gpa,
+                self.meshlets,
+                self.vertices,
+                self.triangles,
+                i,
+                positions,
+                max_vertices,
+                min_triangles,
+                max_triangles,
+                cone_weight,
+                split_factor,
+            ),
+            .spatial => mo.buildMeshletsSpatial(
+                self.gpa,
+                self.meshlets,
+                self.vertices,
+                self.triangles,
+                i,
+                positions,
+                max_vertices,
+                min_triangles,
+                max_triangles,
+                fill_weight,
+            ),
+        } catch unreachable;
+        self.keep();
+    }
+
+    fn keep(self: *MeshletsCase) void {
+        std.mem.doNotOptimizeAway(self.count);
+        std.mem.doNotOptimizeAway(self.meshlets);
+        std.mem.doNotOptimizeAway(self.vertices);
+        std.mem.doNotOptimizeAway(self.triangles);
+    }
+};
+
+/// Each run optimizes fresh copies of the built meshlets.
+const OptimizeMeshletCase = struct {
+    built: *const MeshletsCase,
+    vertices: []u32,
+    triangles: []u8,
+    level: u4,
+
+    fn init(arena: std.mem.Allocator, built: *const MeshletsCase, level: u4) !OptimizeMeshletCase {
+        return .{
+            .built = built,
+            .vertices = try arena.dupe(u32, built.vertices),
+            .triangles = try arena.dupe(u8, built.triangles),
+            .level = level,
+        };
+    }
+
+    fn original(self: *OptimizeMeshletCase) void {
+        @memcpy(self.vertices, self.built.vertices);
+        @memcpy(self.triangles, self.built.triangles);
+        for (self.built.meshlets[0..self.built.count]) |m| {
+            c.meshopt_optimizeMeshletLevel(
+                self.vertices[m.vertex_offset..].ptr,
+                m.vertex_count,
+                self.triangles[m.triangle_offset..].ptr,
+                m.triangle_count,
+                self.level,
+            );
+        }
+        std.mem.doNotOptimizeAway(self.vertices);
+        std.mem.doNotOptimizeAway(self.triangles);
+    }
+
+    fn port(self: *OptimizeMeshletCase) void {
+        @memcpy(self.vertices, self.built.vertices);
+        @memcpy(self.triangles, self.built.triangles);
+        for (self.built.meshlets[0..self.built.count]) |m| {
+            mo.optimizeMeshletLevel(
+                self.vertices[m.vertex_offset..][0..m.vertex_count],
+                self.triangles[m.triangle_offset..][0 .. m.triangle_count * 3],
+                self.level,
+            );
+        }
+        std.mem.doNotOptimizeAway(self.vertices);
+        std.mem.doNotOptimizeAway(self.triangles);
+    }
+};
+
+const MeshletBoundsCase = struct {
+    built: *const MeshletsCase,
+    mesh: meshes.Mesh,
+
+    fn original(self: *MeshletBoundsCase) void {
+        const v = self.mesh.vertices;
+        for (self.built.meshlets[0..self.built.count]) |m| {
+            const bounds = c.meshopt_computeMeshletBounds(
+                self.built.vertices[m.vertex_offset..].ptr,
+                self.built.triangles[m.triangle_offset..].ptr,
+                m.triangle_count,
+                @ptrCast(v.ptr),
+                v.len,
+                @sizeOf(Vertex),
+            );
+            std.mem.doNotOptimizeAway(bounds);
+        }
+    }
+
+    fn port(self: *MeshletBoundsCase) void {
+        const positions = positionsOf(self.mesh.vertices);
+        for (self.built.meshlets[0..self.built.count]) |m| {
+            const bounds = mo.computeMeshletBounds(
+                self.built.vertices[m.vertex_offset..][0..m.vertex_count],
+                self.built.triangles[m.triangle_offset..][0 .. m.triangle_count * 3],
+                positions,
+            );
+            std.mem.doNotOptimizeAway(bounds);
+        }
+    }
+};
+
+/// The built meshlets as clusters of their triangles' mesh indices.
+const Clusters = struct {
+    indices: []u32,
+    counts: []u32,
+
+    fn init(arena: std.mem.Allocator, built: *const MeshletsCase) !Clusters {
+        const meshlets = built.meshlets[0..built.count];
+        const indices = try arena.alloc(u32, built.mesh.indices.len);
+        const counts = try arena.alloc(u32, meshlets.len);
+        var written: usize = 0;
+        for (meshlets, counts) |m, *n| {
+            const local = built.vertices[m.vertex_offset..];
+            for (built.triangles[m.triangle_offset..][0 .. m.triangle_count * 3]) |t| {
+                indices[written] = local[t];
+                written += 1;
+            }
+            n.* = m.triangle_count * 3;
+        }
+        return .{ .indices = indices[0..written], .counts = counts };
+    }
+};
+
+const ClusterBoundsCase = struct {
+    clusters: *const Clusters,
+    mesh: meshes.Mesh,
+
+    fn original(self: *ClusterBoundsCase) void {
+        const v = self.mesh.vertices;
+        var start: usize = 0;
+        for (self.clusters.counts) |n| {
+            const bounds = c.meshopt_computeClusterBounds(
+                self.clusters.indices[start..].ptr,
+                n,
+                @ptrCast(v.ptr),
+                v.len,
+                @sizeOf(Vertex),
+            );
+            std.mem.doNotOptimizeAway(bounds);
+            start += n;
+        }
+    }
+
+    fn port(self: *ClusterBoundsCase) void {
+        const positions = positionsOf(self.mesh.vertices);
+        var start: usize = 0;
+        for (self.clusters.counts) |n| {
+            const indices = self.clusters.indices[start..][0..n];
+            std.mem.doNotOptimizeAway(mo.computeClusterBounds(indices, positions));
+            start += n;
+        }
+    }
+};
+
+const ExtractCase = struct {
+    clusters: *const Clusters,
+    vertices: [256]u32 = undefined,
+    triangles: [512 * 3]u8 = undefined,
+
+    fn original(self: *ExtractCase) void {
+        var start: usize = 0;
+        for (self.clusters.counts) |n| {
+            const unique = c.meshopt_extractMeshletIndices(
+                &self.vertices,
+                &self.triangles,
+                self.clusters.indices[start..].ptr,
+                n,
+            );
+            std.mem.doNotOptimizeAway(unique);
+            std.mem.doNotOptimizeAway(&self.triangles);
+            start += n;
+        }
+    }
+
+    fn port(self: *ExtractCase) void {
+        var start: usize = 0;
+        for (self.clusters.counts) |n| {
+            const indices = self.clusters.indices[start..][0..n];
+            const unique = mo.extractMeshletIndices(&self.vertices, &self.triangles, indices);
+            std.mem.doNotOptimizeAway(unique);
+            std.mem.doNotOptimizeAway(&self.triangles);
+            start += n;
+        }
+    }
+};
+
+/// One sphere around every vertex of the mesh, or around spheres of the
+/// radii in `radii`.
+const SphereBoundsCase = struct {
+    mesh: meshes.Mesh,
+    radii: ?[]const f32,
+
+    fn init(arena: std.mem.Allocator, mesh: meshes.Mesh, spheres: bool) !SphereBoundsCase {
+        if (!spheres) return .{ .mesh = mesh, .radii = null };
+        const radii = try arena.alloc(f32, mesh.vertices.len);
+        for (radii, mesh.vertices) |*r, v| r.* = @abs(v.nx) * 0.01;
+        return .{ .mesh = mesh, .radii = radii };
+    }
+
+    fn original(self: *SphereBoundsCase) void {
+        const v = self.mesh.vertices;
+        const bounds = c.meshopt_computeSphereBounds(
+            @ptrCast(v.ptr),
+            v.len,
+            @sizeOf(Vertex),
+            if (self.radii) |r| r.ptr else null,
+            if (self.radii != null) @sizeOf(f32) else 0,
+        );
+        std.mem.doNotOptimizeAway(bounds);
+    }
+
+    fn port(self: *SphereBoundsCase) void {
+        const radii: ?mo.VertexFloats = if (self.radii) |r| .init(r, 1) else null;
+        const bounds = mo.computeSphereBounds(positionsOf(self.mesh.vertices), radii);
+        std.mem.doNotOptimizeAway(bounds);
+    }
+};
+
+/// Partitions the built meshlets, given by their triangles' indices.
+const PartitionCase = struct {
+    gpa: std.mem.Allocator,
+    vertices: []const Vertex,
+    clusters: *const Clusters,
+    destination: []u32,
+
+    const target = 16;
+
+    fn original(self: *PartitionCase) void {
+        const v = self.vertices;
+        const partitions = c.meshopt_partitionClusters(
+            self.destination.ptr,
+            self.clusters.indices.ptr,
+            self.clusters.indices.len,
+            self.clusters.counts.ptr,
+            self.clusters.counts.len,
+            @ptrCast(v.ptr),
+            v.len,
+            @sizeOf(Vertex),
+            target,
+        );
+        std.mem.doNotOptimizeAway(partitions);
+        std.mem.doNotOptimizeAway(self.destination);
+    }
+
+    fn port(self: *PartitionCase) void {
+        const partitions = mo.partitionClusters(
+            self.gpa,
+            self.destination,
+            self.clusters.indices,
+            self.clusters.counts,
+            positionsOf(self.vertices),
+            self.vertices.len,
+            target,
+        ) catch unreachable;
+        std.mem.doNotOptimizeAway(partitions);
+        std.mem.doNotOptimizeAway(self.destination);
     }
 };

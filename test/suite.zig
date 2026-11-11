@@ -45,6 +45,10 @@ const ported = [_]Module{
     .rasterizer,
     .stripifier,
     .spatialorder,
+    .vcacheoptimizer,
+    .clusterizer,
+    .meshletutils,
+    .partition,
 };
 
 fn needs(modules: []const Module) !void {
