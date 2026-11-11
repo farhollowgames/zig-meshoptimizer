@@ -241,3 +241,45 @@ pub fn indexed(
     const indices = try gpa.dupe(u32, remap);
     return .{ .vertices = vertices, .indices = indices };
 }
+
+/// Bytes per vertex of `quantized`.
+pub const quantized_vertex_size = 16;
+
+/// `vertices` quantized into 16 bytes each, as a game stores them for the
+/// vertex codec: positions as 16-bit unorms of the bounding box's largest
+/// extent and a zero, normals as 8-bit snorms and a zero, and the fractions
+/// of the texture coordinates as 16-bit unorms. The caller frees the bytes.
+pub fn quantized(gpa: std.mem.Allocator, vertices: []const Vertex) ![]u8 {
+    var lo: [3]f32 = @splat(std.math.inf(f32));
+    var hi: [3]f32 = @splat(-std.math.inf(f32));
+    for (vertices) |v| {
+        for (&lo, &hi, [3]f32{ v.px, v.py, v.pz }) |*l, *h, p| {
+            l.* = @min(l.*, p);
+            h.* = @max(h.*, p);
+        }
+    }
+    const extent = @max(hi[0] - lo[0], @max(hi[1] - lo[1], hi[2] - lo[2]));
+    const scale = if (extent > 0) 1 / extent else 0;
+
+    const bytes = try gpa.alloc(u8, vertices.len * quantized_vertex_size);
+    for (vertices, 0..) |v, i| {
+        const q = bytes[i * quantized_vertex_size ..][0..quantized_vertex_size];
+        for ([3]f32{ v.px, v.py, v.pz }, lo, 0..) |p, l, k| {
+            std.mem.writeInt(u16, q[k * 2 ..][0..2], unorm16((p - l) * scale), .little);
+        }
+        std.mem.writeInt(u16, q[6..8], 0, .little);
+        for ([3]f32{ v.nx, v.ny, v.nz }, 0..) |n, k| {
+            const snorm: i8 = @intFromFloat(@round(std.math.clamp(n, -1, 1) * 127));
+            q[8 + k] = @bitCast(snorm);
+        }
+        q[11] = 0;
+        for ([2]f32{ v.tx, v.ty }, 0..) |t, k| {
+            std.mem.writeInt(u16, q[12 + k * 2 ..][0..2], unorm16(t - @floor(t)), .little);
+        }
+    }
+    return bytes;
+}
+
+fn unorm16(v: f32) u16 {
+    return @intFromFloat(@round(std.math.clamp(v, 0, 1) * 65535));
+}

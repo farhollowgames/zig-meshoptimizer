@@ -21,7 +21,19 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | vcacheoptimizer.cpp | `optimizeVertexCache`, `optimizeVertexCacheStrip`, `optimizeVertexCacheFifo` | not started |
 | clusterizer.cpp | `buildMeshletsBound`, `buildMeshlets`, `buildMeshletsFlex`, `buildMeshletsSpatial`, `buildMeshletsScan` | not started |
 | meshletutils.cpp | `optimizeMeshlet`, `optimizeMeshletLevel`, `computeClusterBounds`, `computeMeshletBounds`, `computeSphereBounds`, `extractMeshletIndices` | not started |
-| vertexcodec.cpp | `encodeVertexBuffer`, `encodeVertexBufferLevel`, `encodeVertexBufferBound`, `encodeVertexVersion`, `decodeVertexBuffer` (scalar and SIMD), `decodeVertexVersion` | not started |
+| vertexcodec.cpp | `encodeVertexBuffer` (level 2, version 1) | benchmarked |
+| vertexcodec.cpp | `encodeVertexBufferLevel`: levels 0 to 3 (4 to 9 encode as 3), versions 0 and 1 | oracle-tested; levels 1 to 3 benchmarked, level 0 up to 1.17x and version 0 up to 1.23x slower (the per-group bit choice) |
+| vertexcodec.cpp | `encodeVertexBufferBound` | oracle-tested |
+| vertexcodec.cpp | `encodeVertexVersion`: a `version` argument, default `.v1` (the C global stays in test/capi.zig) | oracle-tested |
+| vertexcodec.cpp | channel encodings: byte deltas, 16-bit deltas, rotated xor deltas (chosen at levels 2 and 3, the rotation at 3) | oracle-tested |
+| vertexcodec.cpp | control modes: bit groups 0/1/2/4 and 1/2/4/8, zeros, literals; version 0's bit groups 0/2/4/8 | oracle-tested |
+| vertexcodec.cpp | `decodeVertexBuffer`, scalar decoder (against the original built without SIMD) | oracle-tested |
+| vertexcodec.cpp | `decodeVertexBuffer`, SSSE3 decoder | oracle-tested |
+| vertexcodec.cpp | `decodeVertexBuffer`, AVX-512 VBMI2 decoder | oracle-tested; 1.00x to 1.04x the original's time |
+| vertexcodec.cpp | `decodeVertexBuffer`, AArch64 NEON decoder (tested on x86 with pshufb for tbl; not run on ARM) | oracle-tested |
+| vertexcodec.cpp | `decodeVertexBuffer` errors: invalid header, invalid data, length mismatch | oracle-tested |
+| vertexcodec.cpp | `decodeVertexVersion` | oracle-tested |
+| vertexcodec.cpp | left out: Wasm SIMD and 32-bit ARM NEON decoders (the scalar decoder there); x86 run-time SSSE3 detection (`SIMD_FALLBACK`; chosen at compile time from the target, so baseline x86-64 gets scalar); `MESHOPTIMIZER_VERTEXCODEC_ZEROCOPY`, `MESHOPTIMIZER_VERTEXCODEC_SIMDNOLOPT` and `TRACE` (build options with the same output); NEON's recomputed delta base on Apple and Windows (the same values by a shorter dependency chain) | not started |
 | indexcodec.cpp | `encodeIndexBuffer`, `encodeIndexBufferBound`, `encodeIndexVersion`, `decodeIndexBuffer`, `decodeIndexVersion`, `encodeIndexSequence`, `encodeIndexSequenceBound`, `decodeIndexSequence` | not started |
 | meshletcodec.cpp | `encodeMeshlet`, `encodeMeshletBound`, `decodeMeshlet`, `decodeMeshletRaw` | not started |
 | vertexfilter.cpp | `encodeFilterOct`, `encodeFilterQuat`, `encodeFilterExp`, `encodeFilterColor`, `decodeFilterOct`, `decodeFilterQuat`, `decodeFilterExp`, `decodeFilterColor` (scalar and SIMD) | not started |

@@ -41,6 +41,15 @@ pub const generateAdjacencyIndexBuffer = indexgenerator.generateAdjacencyIndexBu
 pub const generateTessellationIndexBuffer = indexgenerator.generateTessellationIndexBuffer;
 pub const generateProvokingIndexBuffer = indexgenerator.generateProvokingIndexBuffer;
 
+pub const vertexcodec = @import("vertexcodec.zig");
+pub const VertexVersion = vertexcodec.VertexVersion;
+pub const DecodeVertexError = vertexcodec.DecodeVertexError;
+pub const encodeVertexBuffer = vertexcodec.encodeVertexBuffer;
+pub const encodeVertexBufferLevel = vertexcodec.encodeVertexBufferLevel;
+pub const encodeVertexBufferBound = vertexcodec.encodeVertexBufferBound;
+pub const decodeVertexBuffer = vertexcodec.decodeVertexBuffer;
+pub const decodeVertexVersion = vertexcodec.decodeVertexVersion;
+
 test {
     std.testing.refAllDecls(@This());
 }

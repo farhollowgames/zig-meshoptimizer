@@ -6,4 +6,5 @@
 comptime {
     _ = @import("quantization_test.zig");
     _ = @import("indexgenerator_test.zig");
+    _ = @import("vertexcodec_test.zig");
 }
