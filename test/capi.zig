@@ -647,6 +647,87 @@ export fn meshopt_decodeVertexVersion(buffer: ?[*]const u8, buffer_size: usize) 
     return @backingInt(version);
 }
 
+export fn meshopt_decodeFilterOct(buffer: ?*anyopaque, count: usize, stride: usize) void {
+    mo.decodeFilterOct(bytesMut(buffer, count * stride), stride);
+}
+
+export fn meshopt_decodeFilterQuat(buffer: ?*anyopaque, count: usize, stride: usize) void {
+    mo.decodeFilterQuat(bytesMut(buffer, count * stride), stride);
+}
+
+export fn meshopt_decodeFilterExp(buffer: ?*anyopaque, count: usize, stride: usize) void {
+    mo.decodeFilterExp(bytesMut(buffer, count * stride), stride);
+}
+
+export fn meshopt_decodeFilterColor(buffer: ?*anyopaque, count: usize, stride: usize) void {
+    mo.decodeFilterColor(bytesMut(buffer, count * stride), stride);
+}
+
+export fn meshopt_encodeFilterOct(
+    destination: ?*anyopaque,
+    count: usize,
+    stride: usize,
+    bits: c_int,
+    data: ?[*]const f32,
+) void {
+    mo.encodeFilterOct(
+        bytesMut(destination, count * stride),
+        stride,
+        @intCast(bits),
+        items(f32, data, count * 4),
+    );
+}
+
+export fn meshopt_encodeFilterQuat(
+    destination: ?*anyopaque,
+    count: usize,
+    stride: usize,
+    bits: c_int,
+    data: ?[*]const f32,
+) void {
+    mo.encodeFilterQuat(
+        bytesMut(destination, count * stride),
+        stride,
+        @intCast(bits),
+        items(f32, data, count * 4),
+    );
+}
+
+export fn meshopt_encodeFilterExp(
+    destination: ?*anyopaque,
+    count: usize,
+    stride: usize,
+    bits: c_int,
+    data: ?[*]const f32,
+    mode: c.EncodeExpMode,
+) void {
+    const port_mode: mo.EncodeExpMode = switch (mode) {
+        inline else => |m| @field(mo.EncodeExpMode, @tagName(m)),
+    };
+    mo.encodeFilterExp(
+        bytesMut(destination, count * stride),
+        stride,
+        @intCast(bits),
+        items(f32, data, count * (stride / 4)),
+        port_mode,
+    );
+}
+
+export fn meshopt_encodeFilterColor(
+    destination: ?*anyopaque,
+    count: usize,
+    stride: usize,
+    bits: c_int,
+    data: ?[*]const f32,
+) void {
+    mo.encodeFilterColor(
+        bytesMut(destination, count * stride),
+        stride,
+        @intCast(bits),
+        items(f32, data, count * 4),
+    );
+}
+
 // --------------------------------------------------------
 // Index codec
 // --------------------------------------------------------
@@ -1343,63 +1424,6 @@ export fn meshopt_spatialClusterPoints(
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
         cluster_size,
     ) catch oom();
-}
-
-export fn meshopt_decodeFilterOct(_: ?*anyopaque, _: usize, _: usize) void {
-    pending("meshopt_decodeFilterOct");
-}
-
-export fn meshopt_decodeFilterQuat(_: ?*anyopaque, _: usize, _: usize) void {
-    pending("meshopt_decodeFilterQuat");
-}
-
-export fn meshopt_decodeFilterExp(_: ?*anyopaque, _: usize, _: usize) void {
-    pending("meshopt_decodeFilterExp");
-}
-
-export fn meshopt_decodeFilterColor(_: ?*anyopaque, _: usize, _: usize) void {
-    pending("meshopt_decodeFilterColor");
-}
-
-export fn meshopt_encodeFilterOct(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: ?[*]const f32,
-) void {
-    pending("meshopt_encodeFilterOct");
-}
-
-export fn meshopt_encodeFilterQuat(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: ?[*]const f32,
-) void {
-    pending("meshopt_encodeFilterQuat");
-}
-
-export fn meshopt_encodeFilterExp(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: ?[*]const f32,
-    _: c.EncodeExpMode,
-) void {
-    pending("meshopt_encodeFilterExp");
-}
-
-export fn meshopt_encodeFilterColor(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: ?[*]const f32,
-) void {
-    pending("meshopt_encodeFilterColor");
 }
 
 export fn meshopt_opacityMapMeasure(

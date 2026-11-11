@@ -53,6 +53,7 @@ const ported = [_]Module{
     .meshletcodec,
     .vertexcodec,
     .simplifier,
+    .vertexfilter,
 };
 
 fn needs(modules: []const Module) !void {

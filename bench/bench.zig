@@ -336,6 +336,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try vertexCodec(&bench, arena, soup);
+    try runVertexFilters(&bench, arena, big_soup);
 
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
@@ -2177,6 +2178,33 @@ fn vertexCodec(bench: *Bench, arena: std.mem.Allocator, soup: []const Vertex) !v
     }
 }
 
+/// Every vertex filter on the large soup's normals, tangent frames,
+/// positions and colors: the encoders, and the decoders on what they write.
+fn runVertexFilters(bench: *Bench, arena: std.mem.Allocator, vertices: []const Vertex) !void {
+    const vectors = try meshes.unitVectors(arena, vertices);
+    const frames = try meshes.tangentFrames(arena, vertices);
+    const colors = try meshes.colors(arena, vertices);
+    const positions = try arena.alloc(f32, vertices.len * 3);
+    for (vertices, 0..) |v, i| positions[i * 3 ..][0..3].* = .{ v.px, v.py, v.pz };
+
+    inline for (vertex_filter_cases) |case| {
+        const name, const filter, const stride, const bits, const mode = case;
+        const data = switch (filter) {
+            .oct => vectors,
+            .quat => frames,
+            .exp => positions,
+            .color => colors,
+        };
+        var encode: FilterEncodeCase = try .init(arena, filter, data, stride, bits, mode);
+        bench.run("encodeFilter " ++ name, &encode);
+        if (mode == .separate) {
+            encode.original();
+            var decode: FilterDecodeCase = try .init(arena, filter, encode.original_out, stride);
+            bench.run("decodeFilter " ++ name, &decode);
+        }
+    }
+}
+
 /// The encoder settings the vertex codec cases time: version 1 at each
 /// level, and version 0.
 const vertex_codec_settings = .{
@@ -2479,5 +2507,131 @@ const SimplifyCase = struct {
                 m.vertices.len / 10,
             ),
         };
+    }
+};
+
+const VertexFilter = enum { oct, quat, exp, color };
+
+/// Each vertex filter case: a name, the filter, its stride, bit count and
+/// exponent mode.
+const vertex_filter_cases = [_]struct { []const u8, VertexFilter, usize, u5, mo.EncodeExpMode }{
+    .{ "oct 8-bit", .oct, 4, 8, .separate },
+    .{ "oct 16-bit", .oct, 8, 12, .separate },
+    .{ "quat", .quat, 8, 12, .separate },
+    .{ "exp separate", .exp, 12, 15, .separate },
+    .{ "exp shared_vector", .exp, 12, 15, .shared_vector },
+    .{ "exp shared_component", .exp, 12, 15, .shared_component },
+    .{ "exp clamped", .exp, 12, 15, .clamped },
+    .{ "color 8-bit", .color, 4, 8, .separate },
+    .{ "color 16-bit", .color, 8, 12, .separate },
+};
+
+/// One encoder over all of `data`; `bytes` is the size of what it writes.
+const FilterEncodeCase = struct {
+    filter: VertexFilter,
+    data: []const f32,
+    stride: usize,
+    bits: u5,
+    mode: mo.EncodeExpMode,
+    original_out: []u8,
+    port_out: []u8,
+    bytes: usize,
+
+    fn init(
+        arena: std.mem.Allocator,
+        filter: VertexFilter,
+        data: []const f32,
+        stride: usize,
+        bits: u5,
+        mode: mo.EncodeExpMode,
+    ) !FilterEncodeCase {
+        const floats_per_item = if (filter == .exp) stride / 4 else 4;
+        const size = data.len / floats_per_item * stride;
+        return .{
+            .filter = filter,
+            .data = data,
+            .stride = stride,
+            .bits = bits,
+            .mode = mode,
+            .original_out = try arena.alloc(u8, size),
+            .port_out = try arena.alloc(u8, size),
+            .bytes = size,
+        };
+    }
+
+    fn original(self: *FilterEncodeCase) void {
+        const out = self.original_out.ptr;
+        const count = self.original_out.len / self.stride;
+        const bits: c_int = self.bits;
+        switch (self.filter) {
+            .oct => c.meshopt_encodeFilterOct(out, count, self.stride, bits, self.data.ptr),
+            .quat => c.meshopt_encodeFilterQuat(out, count, self.stride, bits, self.data.ptr),
+            .exp => {
+                const mode: c.EncodeExpMode = switch (self.mode) {
+                    inline else => |m| @field(c.EncodeExpMode, @tagName(m)),
+                };
+                c.meshopt_encodeFilterExp(out, count, self.stride, bits, self.data.ptr, mode);
+            },
+            .color => c.meshopt_encodeFilterColor(out, count, self.stride, bits, self.data.ptr),
+        }
+    }
+
+    fn port(self: *FilterEncodeCase) void {
+        const out = self.port_out;
+        switch (self.filter) {
+            .oct => mo.encodeFilterOct(out, self.stride, self.bits, self.data),
+            .quat => mo.encodeFilterQuat(out, self.stride, self.bits, self.data),
+            .exp => mo.encodeFilterExp(out, self.stride, self.bits, self.data, self.mode),
+            .color => mo.encodeFilterColor(out, self.stride, self.bits, self.data),
+        }
+    }
+};
+
+/// One decoder over a whole buffer, in place, restored to the encoded
+/// bytes before every call.
+const FilterDecodeCase = struct {
+    filter: VertexFilter,
+    stride: usize,
+    encoded: []const u8,
+    buffer: []u8,
+    bytes: usize,
+
+    fn init(
+        arena: std.mem.Allocator,
+        filter: VertexFilter,
+        encoded: []const u8,
+        stride: usize,
+    ) !FilterDecodeCase {
+        return .{
+            .filter = filter,
+            .stride = stride,
+            .encoded = encoded,
+            .buffer = try arena.alloc(u8, encoded.len),
+            .bytes = encoded.len,
+        };
+    }
+
+    pub fn prepare(self: *FilterDecodeCase) void {
+        @memcpy(self.buffer, self.encoded);
+    }
+
+    fn original(self: *FilterDecodeCase) void {
+        const buffer = self.buffer.ptr;
+        const count = self.buffer.len / self.stride;
+        switch (self.filter) {
+            .oct => c.meshopt_decodeFilterOct(buffer, count, self.stride),
+            .quat => c.meshopt_decodeFilterQuat(buffer, count, self.stride),
+            .exp => c.meshopt_decodeFilterExp(buffer, count, self.stride),
+            .color => c.meshopt_decodeFilterColor(buffer, count, self.stride),
+        }
+    }
+
+    fn port(self: *FilterDecodeCase) void {
+        switch (self.filter) {
+            .oct => mo.decodeFilterOct(self.buffer, self.stride),
+            .quat => mo.decodeFilterQuat(self.buffer, self.stride),
+            .exp => mo.decodeFilterExp(self.buffer, self.stride),
+            .color => mo.decodeFilterColor(self.buffer, self.stride),
+        }
     }
 };

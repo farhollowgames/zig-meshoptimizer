@@ -190,6 +190,7 @@ fn referenceLibrary(
 const scalar_sources = [_][]const u8{
     "meshletcodec.cpp",
     "vertexcodec.cpp",
+    "vertexfilter.cpp",
 };
 
 /// Their functions, each renamed `scalar_<name>` so they link beside the
@@ -208,6 +209,14 @@ const scalar_flags = reference_flags ++ [_][]const u8{
     "-Dmeshopt_encodeVertexVersion=scalar_meshopt_encodeVertexVersion",
     "-Dmeshopt_decodeVertexBuffer=scalar_meshopt_decodeVertexBuffer",
     "-Dmeshopt_decodeVertexVersion=scalar_meshopt_decodeVertexVersion",
+    "-Dmeshopt_decodeFilterOct=scalar_meshopt_decodeFilterOct",
+    "-Dmeshopt_decodeFilterQuat=scalar_meshopt_decodeFilterQuat",
+    "-Dmeshopt_decodeFilterExp=scalar_meshopt_decodeFilterExp",
+    "-Dmeshopt_decodeFilterColor=scalar_meshopt_decodeFilterColor",
+    "-Dmeshopt_encodeFilterOct=scalar_meshopt_encodeFilterOct",
+    "-Dmeshopt_encodeFilterQuat=scalar_meshopt_encodeFilterQuat",
+    "-Dmeshopt_encodeFilterExp=scalar_meshopt_encodeFilterExp",
+    "-Dmeshopt_encodeFilterColor=scalar_meshopt_encodeFilterColor",
 };
 
 /// The original's SIMD files built with their scalar paths, for the oracle
