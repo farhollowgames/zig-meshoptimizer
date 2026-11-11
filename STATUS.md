@@ -18,9 +18,12 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | indexgenerator.cpp | `generateVertexRemap`, `generateVertexRemapMulti`, `generateVertexRemapCustom`, `remapVertexBuffer`, `remapIndexBuffer` | ported |
 | indexgenerator.cpp | `filterIndexBuffer`, `filterIndexBufferMulti`, `generateShadowIndexBuffer`, `generateShadowIndexBufferMulti`, `generatePositionRemap` | ported |
 | indexgenerator.cpp | `generateAdjacencyIndexBuffer`, `generateTessellationIndexBuffer`, `generateProvokingIndexBuffer` | ported |
-| vcacheoptimizer.cpp | `optimizeVertexCache`, `optimizeVertexCacheStrip`, `optimizeVertexCacheFifo` | not started |
-| clusterizer.cpp | `buildMeshletsBound`, `buildMeshlets`, `buildMeshletsFlex`, `buildMeshletsSpatial`, `buildMeshletsScan` | not started |
-| meshletutils.cpp | `optimizeMeshlet`, `optimizeMeshletLevel`, `computeClusterBounds`, `computeMeshletBounds`, `computeSphereBounds`, `extractMeshletIndices` | not started |
+| vcacheoptimizer.cpp | `optimizeVertexCache`, `optimizeVertexCacheFifo` | benchmarked |
+| vcacheoptimizer.cpp | `optimizeVertexCacheStrip`, `meshopt_optimizeVertexCacheTable` (`optimizeVertexCacheTable`, `VertexScoreTable`) | oracle-tested |
+| clusterizer.cpp | `buildMeshlets`, `buildMeshletsSpatial` | benchmarked |
+| clusterizer.cpp | `buildMeshletsBound`, `buildMeshletsFlex`, `buildMeshletsScan` | oracle-tested |
+| meshletutils.cpp | `optimizeMeshlet`, `computeMeshletBounds` | benchmarked |
+| meshletutils.cpp | `optimizeMeshletLevel`, `computeClusterBounds`, `computeSphereBounds`, `extractMeshletIndices` | oracle-tested |
 | vertexcodec.cpp | `encodeVertexBuffer`, `encodeVertexBufferLevel`, `encodeVertexBufferBound`, `encodeVertexVersion`, `decodeVertexBuffer` (scalar and SIMD), `decodeVertexVersion` | not started |
 | indexcodec.cpp | `encodeIndexBuffer`, `encodeIndexBufferBound`, `encodeIndexVersion`, `decodeIndexBuffer`, `decodeIndexVersion`, `encodeIndexSequence`, `encodeIndexSequenceBound`, `decodeIndexSequence` | not started |
 | meshletcodec.cpp | `encodeMeshlet`, `encodeMeshletBound`, `decodeMeshlet`, `decodeMeshletRaw` | not started |
@@ -32,7 +35,7 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | stripifier.cpp | `stripify`, `stripifyBound`, `unstripify`, `unstripifyBound` | not started |
 | spatialorder.cpp | `spatialSortRemap`, `spatialSortTriangles`, `spatialClusterPoints` | not started |
 | simplifier.cpp | `simplify`, `simplifyWithAttributes`, `simplifyWithUpdate`, `simplifySloppy`, `simplifyPrune`, `simplifyPoints`, `simplifyScale`, every option and vertex lock flag | not started |
-| partition.cpp | `partitionClusters` | not started |
+| partition.cpp | `partitionClusters` | oracle-tested |
 | opacitymap.cpp | `opacityMapMeasure`, `opacityMapRasterize`, `opacityMapEntrySize`, `opacityMapCompact` | not started |
 | tangentspace.cpp | `generateTangents`, `generateNormals` | not started |
 | remesher.cpp | `remesh` | not started |
