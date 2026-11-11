@@ -665,3 +665,15 @@ pub extern fn meshopt_computePositionExponent(
 /// meshoptimizer.h's inline C++ quantizers, exported by test/reference.cpp.
 pub extern fn reference_quantizeUnorm(v: f32, N: c_int) c_int;
 pub extern fn reference_quantizeSnorm(v: f32, N: c_int) c_int;
+pub extern fn reference_quantizeUnormArray(
+    destination: [*]c_int,
+    values: [*]const f32,
+    count: usize,
+    N: c_int,
+) void;
+pub extern fn reference_quantizeSnormArray(
+    destination: [*]c_int,
+    values: [*]const f32,
+    count: usize,
+    N: c_int,
+) void;

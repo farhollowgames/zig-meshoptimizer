@@ -6,4 +6,10 @@
 comptime {
     _ = @import("quantization_test.zig");
     _ = @import("indexgenerator_test.zig");
+    _ = @import("overdrawoptimizer_test.zig");
+    _ = @import("vfetchoptimizer_test.zig");
+    _ = @import("indexanalyzer_test.zig");
+    _ = @import("rasterizer_test.zig");
+    _ = @import("stripifier_test.zig");
+    _ = @import("spatialorder_test.zig");
 }

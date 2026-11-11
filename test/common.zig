@@ -2,6 +2,7 @@
 //! original take them, and comparisons that name what differs.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
@@ -21,6 +22,13 @@ pub fn floatsOf(vertices: []const Vertex) []const f32 {
 /// The positions of `vertices`, the first three floats of each.
 pub fn positionsOf(vertices: []const Vertex) mo.VertexFloats {
     return .init(floatsOf(vertices), vertex_floats);
+}
+
+/// The positions of `vertices`, 3 floats each. The caller frees them.
+pub fn packedPositions(vertices: []const Vertex) ![]f32 {
+    const result = try gpa.alloc(f32, vertices.len * 3);
+    for (vertices, 0..) |v, i| result[i * 3 ..][0..3].* = .{ v.px, v.py, v.pz };
+    return result;
 }
 
 /// The test meshes: the demo mesh indexed as the original's demo indexes
@@ -112,4 +120,138 @@ pub fn expectSame(comptime T: type, what: []const u8, want: []const T, got: []co
 /// `expectSame` for one value.
 pub fn expectSameValue(comptime T: type, what: []const u8, want: T, got: T) !void {
     return expectSame(T, what, &.{want}, &.{got});
+}
+
+/// Fails unless the structs `want` and `got` have the same value in every
+/// field of `want`'s type, compared as `expectSame` does.
+pub fn expectSameFields(want: anytype, got: anytype) !void {
+    const info = @typeInfo(@TypeOf(want)).@"struct";
+    inline for (info.field_names, info.field_types) |name, T| {
+        try expectSameValue(T, name, @field(want, name), @field(got, name));
+    }
+}
+
+/// `indices` optimized for the vertex cache by the original, the input the
+/// functions after it in a pipeline expect. The caller frees the result.
+pub fn vertexCacheOptimized(indices: []const u32, vertex_count: usize) ![]u32 {
+    const result = try gpa.alloc(u32, indices.len);
+    c.meshopt_optimizeVertexCache(result.ptr, indices.ptr, indices.len, vertex_count);
+    return result;
+}
+
+/// `count` random points of 3 floats from `seed`, uniform in a cube of side
+/// `extent` around the origin. The caller frees them.
+pub fn randomPoints(seed: u64, count: usize, extent: f32) ![]f32 {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const points = try gpa.alloc(f32, count * 3);
+    for (points) |*p| p.* = (rng.float(f32) - 0.5) * extent;
+    return points;
+}
+
+/// Points of 3 floats with the values that test edge cases: zeros of both
+/// signs, infinities, NaN, the largest and smallest floats and denormals.
+pub const special_points = [_]f32{
+    0,                      0,                       0,
+    -0.0,                   1,                       -1,
+    std.math.floatMax(f32), -std.math.floatMax(f32), 0,
+    std.math.inf(f32),      2,                       3,
+    -std.math.inf(f32),     -2,                      -3,
+    std.math.nan(f32),      4,                       5,
+    1e-40,                  -1e-40,                  std.math.floatMin(f32),
+    1e30,                   -1e30,                   1e-30,
+    0.5,                    0.25,                    0.125,
+};
+
+/// How many cases every fuzz test runs.
+pub const fuzz_cases = 1000;
+
+/// Runs `check(seed)` on `fuzz_cases` seeds from `first_seed`, each case
+/// building its inputs from its own seed, and prints the seed of the case
+/// that fails, by an error or, outside Windows, by a failed safety check.
+pub fn fuzz(name: []const u8, first_seed: u64, check: anytype) !void {
+    const report_crashes = builtin.os.tag != .windows;
+    var previous: std.posix.Sigaction = undefined;
+    if (report_crashes) {
+        const action: std.posix.Sigaction = .{
+            .handler = .{ .handler = reportCrash },
+            .mask = std.posix.sigemptyset(),
+            .flags = std.posix.SA.RESETHAND,
+        };
+        std.posix.sigaction(.ABRT, &action, &previous);
+    }
+    defer if (report_crashes) std.posix.sigaction(.ABRT, &previous, null);
+
+    for (0..fuzz_cases) |i| {
+        const seed = first_seed + i;
+        running = .{ .name = name, .seed = seed };
+        check(seed) catch |err| {
+            std.debug.print("{s}: failed at seed {d}\n", .{ name, seed });
+            return err;
+        };
+    }
+}
+
+/// The fuzz case running now.
+var running: struct { name: []const u8 = "", seed: u64 = 0 } = .{};
+
+/// Names the fuzz case that was running when a failed safety check aborts
+/// the process, after the panic's own message.
+fn reportCrash(_: std.posix.SIG) callconv(.c) void {
+    var buffer: [256]u8 = undefined;
+    const line = std.fmt.bufPrint(&buffer, "{s}: crashed at seed {d}\n", .{
+        running.name,
+        running.seed,
+    }) catch return;
+    _ = std.c.write(2, line.ptr, line.len);
+}
+
+/// A random mesh for the fuzz case `seed`, with one to `max_vertices`
+/// vertices and up to `max_triangles` triangles, made by `meshes.random`.
+/// Its positions stay on the lattice in one case in four, where many
+/// triangles are degenerate or coplanar; in the others they move into a
+/// random cloud, onto a plane, or get the float range's special values.
+/// The caller frees it.
+pub fn fuzzMesh(seed: u64, max_vertices: u32, max_triangles: u32) !Mesh {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const vertex_count = rng.uintLessThan(u32, max_vertices) + 1;
+    const triangle_count = rng.uintAtMost(u32, max_triangles);
+    const mesh = try meshes.random(gpa, rng.int(u64), vertex_count, triangle_count);
+    switch (rng.uintLessThan(u32, 4)) {
+        0 => {},
+        1 => {
+            const extent = std.math.pow(f32, 10, @floatFromInt(rng.intRangeAtMost(i32, -3, 6)));
+            for (mesh.vertices) |*v| {
+                v.px = (rng.float(f32) - 0.5) * extent;
+                v.py = (rng.float(f32) - 0.5) * extent;
+                v.pz = (rng.float(f32) - 0.5) * extent;
+            }
+        },
+        2 => {
+            const axis = rng.uintLessThan(usize, 3);
+            for (mesh.vertices) |*v| position(v)[axis] = 0.25;
+        },
+        else => for (mesh.vertices) |*v| {
+            if (rng.uintLessThan(u32, 4) != 0) continue;
+            const axis = rng.uintLessThan(usize, 3);
+            position(v)[axis] = special_points[rng.uintLessThan(usize, special_points.len)];
+        },
+    }
+    return mesh;
+}
+
+fn position(v: *Vertex) *[3]f32 {
+    return @ptrCast(v);
+}
+
+/// The points of 3 floats in `points` spread `stride` floats apart, the
+/// floats between them NaN, which no position read may see. The caller
+/// frees the result.
+pub fn strided(points: []const f32, stride: usize) ![]f32 {
+    const count = points.len / 3;
+    const result = try gpa.alloc(f32, count * stride);
+    @memset(result, std.math.nan(f32));
+    for (0..count) |i| result[i * stride ..][0..3].* = points[i * 3 ..][0..3].*;
+    return result;
 }

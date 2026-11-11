@@ -41,6 +41,37 @@ pub const generateAdjacencyIndexBuffer = indexgenerator.generateAdjacencyIndexBu
 pub const generateTessellationIndexBuffer = indexgenerator.generateTessellationIndexBuffer;
 pub const generateProvokingIndexBuffer = indexgenerator.generateProvokingIndexBuffer;
 
+pub const overdrawoptimizer = @import("overdrawoptimizer.zig");
+pub const optimizeOverdraw = overdrawoptimizer.optimizeOverdraw;
+
+pub const vfetchoptimizer = @import("vfetchoptimizer.zig");
+pub const optimizeVertexFetch = vfetchoptimizer.optimizeVertexFetch;
+pub const optimizeVertexFetchRemap = vfetchoptimizer.optimizeVertexFetchRemap;
+
+pub const indexanalyzer = @import("indexanalyzer.zig");
+pub const VertexCacheStatistics = indexanalyzer.VertexCacheStatistics;
+pub const VertexFetchStatistics = indexanalyzer.VertexFetchStatistics;
+pub const analyzeVertexCache = indexanalyzer.analyzeVertexCache;
+pub const analyzeVertexFetch = indexanalyzer.analyzeVertexFetch;
+
+pub const rasterizer = @import("rasterizer.zig");
+pub const OverdrawStatistics = rasterizer.OverdrawStatistics;
+pub const CoverageStatistics = rasterizer.CoverageStatistics;
+pub const analyzeOverdraw = rasterizer.analyzeOverdraw;
+pub const analyzeCoverage = rasterizer.analyzeCoverage;
+
+pub const stripifier = @import("stripifier.zig");
+pub const stripify = stripifier.stripify;
+pub const stripifyBound = stripifier.stripifyBound;
+pub const unstripify = stripifier.unstripify;
+pub const unstripifyBound = stripifier.unstripifyBound;
+
+pub const spatialorder = @import("spatialorder.zig");
+pub const spatialSortRemap = spatialorder.spatialSortRemap;
+pub const spatialSortTriangles = spatialorder.spatialSortTriangles;
+pub const spatialClusterPoints = spatialorder.spatialClusterPoints;
+
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("convert.zig");
 }

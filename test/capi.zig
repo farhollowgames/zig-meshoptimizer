@@ -364,6 +364,213 @@ export fn meshopt_computePositionExponent(
 }
 
 // --------------------------------------------------------
+// Overdraw and vertex fetch optimizers, analyzers, strips, spatial order
+// --------------------------------------------------------
+
+export fn meshopt_optimizeOverdraw(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    threshold: f32,
+) void {
+    mo.optimizeOverdraw(
+        hooks,
+        itemsMut(u32, destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        threshold,
+    ) catch oom();
+}
+
+export fn meshopt_optimizeVertexFetch(
+    destination: ?*anyopaque,
+    indices: ?[*]u32,
+    index_count: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+) usize {
+    return mo.optimizeVertexFetch(
+        hooks,
+        bytesMut(destination, vertex_count * vertex_size),
+        itemsMut(u32, indices, index_count),
+        bytes(vertices, vertex_count * vertex_size),
+        vertex_size,
+    ) catch oom();
+}
+
+export fn meshopt_optimizeVertexFetchRemap(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+) usize {
+    return mo.optimizeVertexFetchRemap(
+        itemsMut(u32, destination, vertex_count),
+        items(u32, indices, index_count),
+        vertex_count,
+    );
+}
+
+export fn meshopt_analyzeVertexCache(
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    cache_size: u32,
+    warp_size: u32,
+    primgroup_size: u32,
+) c.VertexCacheStatistics {
+    const stats = mo.analyzeVertexCache(
+        hooks,
+        items(u32, indices, index_count),
+        vertex_count,
+        cache_size,
+        warp_size,
+        primgroup_size,
+    ) catch oom();
+    return .{
+        .vertices_transformed = stats.vertices_transformed,
+        .warps_executed = stats.warps_executed,
+        .acmr = stats.acmr,
+        .atvr = stats.atvr,
+    };
+}
+
+export fn meshopt_analyzeVertexFetch(
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    vertex_size: usize,
+) c.VertexFetchStatistics {
+    const stats = mo.analyzeVertexFetch(
+        hooks,
+        items(u32, indices, index_count),
+        vertex_count,
+        vertex_size,
+    ) catch oom();
+    return .{ .bytes_fetched = stats.bytes_fetched, .overfetch = stats.overfetch };
+}
+
+export fn meshopt_analyzeOverdraw(
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) c.OverdrawStatistics {
+    const stats = mo.analyzeOverdraw(
+        hooks,
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ) catch oom();
+    return .{
+        .pixels_covered = stats.pixels_covered,
+        .pixels_shaded = stats.pixels_shaded,
+        .overdraw = stats.overdraw,
+    };
+}
+
+export fn meshopt_analyzeCoverage(
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) c.CoverageStatistics {
+    const stats = mo.analyzeCoverage(
+        hooks,
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ) catch oom();
+    return .{ .coverage = stats.coverage, .extent = stats.extent };
+}
+
+export fn meshopt_stripify(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    restart_index: u32,
+) usize {
+    return mo.stripify(
+        hooks,
+        itemsMut(u32, destination, mo.stripifyBound(index_count)),
+        items(u32, indices, index_count),
+        vertex_count,
+        restart_index,
+    ) catch oom();
+}
+
+export fn meshopt_stripifyBound(index_count: usize) usize {
+    return mo.stripifyBound(index_count);
+}
+
+export fn meshopt_unstripify(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    restart_index: u32,
+) usize {
+    const bound = if (index_count < 3) 0 else (index_count - 2) * 3;
+    return mo.unstripify(
+        itemsMut(u32, destination, bound),
+        items(u32, indices, index_count),
+        restart_index,
+    );
+}
+
+export fn meshopt_unstripifyBound(index_count: usize) usize {
+    return mo.unstripifyBound(index_count);
+}
+
+export fn meshopt_spatialSortRemap(
+    destination: ?[*]u32,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) void {
+    mo.spatialSortRemap(
+        hooks,
+        itemsMut(u32, destination, vertex_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ) catch oom();
+}
+
+export fn meshopt_spatialSortTriangles(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) void {
+    mo.spatialSortTriangles(
+        hooks,
+        itemsMut(u32, destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ) catch oom();
+}
+
+export fn meshopt_spatialClusterPoints(
+    destination: ?[*]u32,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    cluster_size: usize,
+) void {
+    mo.spatialClusterPoints(
+        hooks,
+        itemsMut(u32, destination, vertex_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        cluster_size,
+    ) catch oom();
+}
+
+// --------------------------------------------------------
 // Not ported yet
 // --------------------------------------------------------
 export fn meshopt_optimizeVertexCache(_: ?[*]u32, _: ?[*]const u32, _: usize, _: usize) void {
@@ -382,33 +589,6 @@ export fn meshopt_optimizeVertexCacheFifo(
     _: u32,
 ) void {
     pending("meshopt_optimizeVertexCacheFifo");
-}
-
-export fn meshopt_optimizeOverdraw(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: f32,
-) void {
-    pending("meshopt_optimizeOverdraw");
-}
-
-export fn meshopt_optimizeVertexFetch(
-    _: ?*anyopaque,
-    _: ?[*]u32,
-    _: usize,
-    _: ?*const anyopaque,
-    _: usize,
-    _: usize,
-) usize {
-    pending("meshopt_optimizeVertexFetch");
-}
-
-export fn meshopt_optimizeVertexFetchRemap(_: ?[*]u32, _: ?[*]const u32, _: usize, _: usize) usize {
-    pending("meshopt_optimizeVertexFetchRemap");
 }
 
 export fn meshopt_encodeIndexBuffer(_: ?[*]u8, _: usize, _: ?[*]const u32, _: usize) usize {
@@ -693,62 +873,6 @@ export fn meshopt_simplifyScale(_: ?[*]const f32, _: usize, _: usize) f32 {
     pending("meshopt_simplifyScale");
 }
 
-export fn meshopt_stripify(_: ?[*]u32, _: ?[*]const u32, _: usize, _: usize, _: u32) usize {
-    pending("meshopt_stripify");
-}
-
-export fn meshopt_stripifyBound(_: usize) usize {
-    pending("meshopt_stripifyBound");
-}
-
-export fn meshopt_unstripify(_: ?[*]u32, _: ?[*]const u32, _: usize, _: u32) usize {
-    pending("meshopt_unstripify");
-}
-
-export fn meshopt_unstripifyBound(_: usize) usize {
-    pending("meshopt_unstripifyBound");
-}
-
-export fn meshopt_analyzeVertexCache(
-    _: ?[*]const u32,
-    _: usize,
-    _: usize,
-    _: u32,
-    _: u32,
-    _: u32,
-) c.VertexCacheStatistics {
-    pending("meshopt_analyzeVertexCache");
-}
-
-export fn meshopt_analyzeVertexFetch(
-    _: ?[*]const u32,
-    _: usize,
-    _: usize,
-    _: usize,
-) c.VertexFetchStatistics {
-    pending("meshopt_analyzeVertexFetch");
-}
-
-export fn meshopt_analyzeOverdraw(
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-) c.OverdrawStatistics {
-    pending("meshopt_analyzeOverdraw");
-}
-
-export fn meshopt_analyzeCoverage(
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-) c.CoverageStatistics {
-    pending("meshopt_analyzeCoverage");
-}
-
 export fn meshopt_buildMeshlets(
     _: ?[*]c.Meshlet,
     _: ?[*]u32,
@@ -872,31 +996,6 @@ export fn meshopt_partitionClusters(
     _: usize,
 ) usize {
     pending("meshopt_partitionClusters");
-}
-
-export fn meshopt_spatialSortRemap(_: ?[*]u32, _: ?[*]const f32, _: usize, _: usize) void {
-    pending("meshopt_spatialSortRemap");
-}
-
-export fn meshopt_spatialSortTriangles(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-) void {
-    pending("meshopt_spatialSortTriangles");
-}
-
-export fn meshopt_spatialClusterPoints(
-    _: ?[*]u32,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-) void {
-    pending("meshopt_spatialClusterPoints");
 }
 
 export fn meshopt_opacityMapMeasure(
