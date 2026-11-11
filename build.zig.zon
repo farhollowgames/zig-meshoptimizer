@@ -1,0 +1,22 @@
+.{
+    .name = .meshoptimizer,
+    .version = "0.1.0",
+    .fingerprint = 0x93978b822977bfc5, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        // The original C++, built only by the tests and the benchmark as the
+        // oracle the port is checked against; never part of the package.
+        .upstream = .{
+            .lazy = true,
+            .url = "git+https://github.com/zeux/meshoptimizer?ref=v1.3#f0a684f11ead064e176775c9b796f82a55910e92",
+            .hash = "N-V-__8AAFOxJgCPdjHgvo4vFe7vso_lkQVPxkSXK-fDTqXC",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE.md",
+        "README.md",
+    },
+}
