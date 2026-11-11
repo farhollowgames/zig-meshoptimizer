@@ -1,6 +1,6 @@
 //! Quantization against the original: every float for half floats, every
-//! half for their floats, and sampled floats at every bit count for the
-//! others.
+//! half for their floats, and sampled and fuzzed floats at every bit count
+//! for the others.
 
 const std = @import("std");
 const mo = @import("meshoptimizer");
@@ -67,25 +67,46 @@ test "quantizeFloat matches the original at every bit count" {
     }
 }
 
-test "quantizeUnorm and quantizeSnorm match the original" {
+test "quantizeUnorm and quantizeSnorm match the original on sampled floats" {
     const samples = try sampledFloats(common.gpa);
     defer common.gpa.free(samples);
-    var prng: std.Random.DefaultPrng = .init(1);
-    const rng = prng.random();
-    var values: std.ArrayList(f32) = .empty;
-    defer values.deinit(common.gpa);
-    try values.appendSlice(common.gpa, samples);
-    for (0..100_000) |_| try values.append(common.gpa, rng.float(f32) * 2.5 - 1.25);
+    try checkNorms(samples);
+}
 
+test "quantizeUnorm and quantizeSnorm match the original on fuzzed values" {
+    try common.fuzz("quantizeUnorm and quantizeSnorm", 0, fuzzNorms);
+}
+
+fn fuzzNorms(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var values: [100]f32 = undefined;
+    for (&values) |*v| {
+        v.* = switch (rng.uintLessThan(u32, 4)) {
+            // Around the range, and well outside it.
+            0, 1 => rng.float(f32) * 2.5 - 1.25,
+            2 => (rng.float(f32) * 2 - 1) * std.math.ldexp(
+                @as(f32, 1),
+                rng.intRangeAtMost(i32, -30, 30),
+            ),
+            // Any bit pattern, NaNs and infinities among them.
+            else => @bitCast(rng.int(u32)),
+        };
+    }
+    try checkNorms(&values);
+}
+
+/// Every value at every bit count both functions take.
+fn checkNorms(values: []const f32) !void {
     for (1..31) |bits| {
-        for (values.items) |v| {
+        for (values) |v| {
             const want = c.reference_quantizeUnorm(v, @intCast(bits));
             const got = mo.quantizeUnorm(v, @intCast(bits));
             try common.expectSameValue(i64, "quantizeUnorm", want, got);
         }
     }
     for (1..32) |bits| {
-        for (values.items) |v| {
+        for (values) |v| {
             const want = c.reference_quantizeSnorm(v, @intCast(bits));
             const got = mo.quantizeSnorm(v, @intCast(bits));
             try common.expectSameValue(i64, "quantizeSnorm", want, got);
@@ -93,10 +114,14 @@ test "quantizeUnorm and quantizeSnorm match the original" {
     }
 }
 
-test "computePositionExponent matches the original" {
-    var prng: std.Random.DefaultPrng = .init(2);
+test "computePositionExponent matches the original on fuzzed boxes" {
+    try common.fuzz("computePositionExponent", 0, fuzzExponent);
+}
+
+fn fuzzExponent(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
     const rng = prng.random();
-    for (0..200_000) |i| {
+    for (0..200) |i| {
         var minv: [3]f32 = undefined;
         var maxv: [3]f32 = undefined;
         // Boxes of every magnitude, some degenerate, some with an infinity.
@@ -107,7 +132,7 @@ test "computePositionExponent matches the original" {
             lo.* = @min(a, b);
             hi.* = @max(a, b);
         }
-        if (i % 1009 == 0) maxv[i % 3] = std.math.inf(f32);
+        if (rng.uintLessThan(u32, 50) == 0) maxv[rng.uintLessThan(usize, 3)] = std.math.inf(f32);
         const min_exp = rng.intRangeAtMost(i32, -126, 20);
         const max_bits = rng.intRangeAtMost(u5, 2, 24);
         const want = c.meshopt_computePositionExponent(&minv, &maxv, min_exp, max_bits);
