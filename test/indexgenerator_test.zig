@@ -190,6 +190,27 @@ fn checkRemapApply(
     );
     mo.remapIndexBuffer(got_indices, indices, remap);
     try common.expectSame(u32, "remapIndexBuffer", want_indices, got_indices);
+
+    // Without indices the table itself is read, and may be overwritten as
+    // it is read: in place, and shifted by one either way.
+    if (indices == null and remap.len > 1) {
+        const want_table = try gpa.alloc(u32, remap.len + 1);
+        defer gpa.free(want_table);
+        const got_table = try gpa.alloc(u32, remap.len + 1);
+        defer gpa.free(got_table);
+        const n = remap.len;
+        for ([_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 } }) |shift| {
+            @memcpy(want_table[shift[1]..][0..n], remap);
+            @memcpy(got_table[shift[1]..][0..n], remap);
+            want_table[if (shift[1] == 0) n else 0] = 7;
+            got_table[if (shift[1] == 0) n else 0] = 7;
+            const dst = shift[0];
+            const src = shift[1];
+            c.meshopt_remapIndexBuffer(want_table[dst..].ptr, null, n, want_table[src..].ptr);
+            mo.remapIndexBuffer(got_table[dst..][0..n], null, got_table[src..][0..n]);
+            try common.expectSame(u32, "remapIndexBuffer overlapping", want_table, got_table);
+        }
+    }
 }
 
 test "filterIndexBuffer and generateShadowIndexBuffer match the original on every mesh" {

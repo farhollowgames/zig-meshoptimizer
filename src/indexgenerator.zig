@@ -497,9 +497,19 @@ pub fn remapVertexBuffer(
 pub fn remapIndexBuffer(destination: []u32, indices: ?[]const u32, remap: []const u32) void {
     const list = indices orelse {
         // Every vertex in order: a copy, which the loop below would make
-        // one index at a time.
+        // one index at a time, unless the two overlap, as the original
+        // lets them.
         for (remap) |index| assert(index != none);
-        @memcpy(destination[0..remap.len], remap);
+        const target = destination[0..remap.len];
+        const start = @intFromPtr(remap.ptr);
+        const end = start + remap.len * @sizeOf(u32);
+        const target_start = @intFromPtr(target.ptr);
+        const target_end = target_start + target.len * @sizeOf(u32);
+        if (target_end <= start or end <= target_start) {
+            @memcpy(target, remap);
+        } else {
+            for (target, 0..) |*d, i| d.* = remap[i];
+        }
         return;
     };
     for (destination[0..list.len], list) |*d, index| {
