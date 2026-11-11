@@ -113,3 +113,18 @@ pub fn expectSame(comptime T: type, what: []const u8, want: []const T, got: []co
 pub fn expectSameValue(comptime T: type, what: []const u8, want: T, got: T) !void {
     return expectSame(T, what, &.{want}, &.{got});
 }
+
+/// How many cases every fuzz test runs.
+pub const fuzz_cases = 1000;
+
+/// Runs `check` on `fuzz_cases` seeds from `first_seed`, each case building its inputs
+/// from its own seed, and prints the seed of the case that fails.
+pub fn fuzz(name: []const u8, first_seed: u64, check: *const fn (seed: u64) anyerror!void) !void {
+    for (0..fuzz_cases) |i| {
+        const seed = first_seed + i;
+        check(seed) catch |err| {
+            std.debug.print("{s}: failed at seed {d}\n", .{ name, seed });
+            return err;
+        };
+    }
+}

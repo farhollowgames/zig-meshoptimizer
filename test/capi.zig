@@ -899,6 +899,32 @@ export fn meshopt_spatialClusterPoints(
     pending("meshopt_spatialClusterPoints");
 }
 
+// --------------------------------------------------------
+// Remesher
+// --------------------------------------------------------
+
+export fn meshopt_remesh(
+    destination: ?[*]f32,
+    max_triangle_count: usize,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    resolution: c_int,
+    options: u32,
+) usize {
+    const out: ?[]f32 = if (destination) |d| d[0 .. max_triangle_count * 9] else null;
+    return mo.remesh(
+        hooks,
+        out,
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        @intCast(resolution),
+        @fromBackingInt(options),
+    ) catch oom();
+}
+
 export fn meshopt_opacityMapMeasure(
     _: ?[*]u8,
     _: ?[*]u32,
@@ -976,18 +1002,4 @@ export fn meshopt_generateNormals(
     _: f32,
 ) void {
     pending("meshopt_generateNormals");
-}
-
-export fn meshopt_remesh(
-    _: ?[*]f32,
-    _: usize,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: u32,
-) usize {
-    pending("meshopt_remesh");
 }

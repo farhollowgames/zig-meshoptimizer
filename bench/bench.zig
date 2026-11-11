@@ -81,6 +81,9 @@ pub fn main(init: std.process.Init) !void {
         bench.run("generateProvokingIndexBuffer " ++ name, &provoking_case);
     }
 
+    const pirate = try indexedSoup(arena, soup);
+    try benchRemesher(&bench, arena, &pirate, &big);
+
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
     std.debug.print("{s:<48} {d:>10.3} {d:>10.3} {d:>7.2}\n", .{
@@ -217,5 +220,122 @@ const ProvokingCase = struct {
             self.vertex_count,
         ) catch
             unreachable;
+    }
+};
+
+// --------------------------------------------------------
+// Remesher
+// --------------------------------------------------------
+
+/// The demo mesh indexed by the original's `generateVertexRemap`, as its
+/// demo indexes it.
+fn indexedSoup(arena: std.mem.Allocator, soup: []const Vertex) !meshes.Mesh {
+    const remap = try arena.alloc(u32, soup.len);
+    const unique = c.meshopt_generateVertexRemap(
+        remap.ptr,
+        null,
+        soup.len,
+        soup.ptr,
+        soup.len,
+        @sizeOf(Vertex),
+    );
+    return meshes.indexed(arena, soup, remap, unique);
+}
+
+fn selected(bench: *const Bench, name: []const u8) bool {
+    const filter = bench.filter orelse return true;
+    return std.mem.indexOf(u8, name, filter) != null;
+}
+
+fn floatsOf(mesh: *const meshes.Mesh) []const f32 {
+    return std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(mesh.vertices));
+}
+
+const vertex_floats = @sizeOf(Vertex) / @sizeOf(f32);
+
+fn benchRemesher(
+    bench: *Bench,
+    arena: std.mem.Allocator,
+    pirate: *const meshes.Mesh,
+    big: *const meshes.Mesh,
+) !void {
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 1M", big } }) |named| {
+        inline for (.{ 64, 128, 256 }) |resolution| {
+            inline for (.{ .{ "", 0 }, .{ " shell", 1 }, .{ " solve", 2 } }) |mode| {
+                const case_name = std.fmt.comptimePrint(
+                    "remesh {d}{s} {s}",
+                    .{ resolution, mode[0], named[0] },
+                );
+                // Its capacity takes a remesh of its own: only for cases that run.
+                if (selected(bench, case_name)) {
+                    var remesh_case: RemeshCase = try .init(
+                        arena,
+                        bench.gpa,
+                        named[1],
+                        resolution,
+                        mode[1],
+                    );
+                    bench.run(case_name, &remesh_case);
+                }
+            }
+        }
+    }
+}
+
+const RemeshCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: *const meshes.Mesh,
+    resolution: u32,
+    options: u32,
+    destination: []f32,
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: *const meshes.Mesh,
+        resolution: u32,
+        options: u32,
+    ) !RemeshCase {
+        var case: RemeshCase = .{
+            .gpa = gpa,
+            .mesh = mesh,
+            .resolution = resolution,
+            .options = options,
+            .destination = &.{},
+        };
+        const capacity = case.call(null, 0);
+        case.destination = try arena.alloc(f32, capacity * 9);
+        return case;
+    }
+
+    fn call(self: *RemeshCase, destination: ?[*]f32, max_triangle_count: usize) usize {
+        const m = self.mesh;
+        return c.meshopt_remesh(
+            destination,
+            max_triangle_count,
+            m.indices.ptr,
+            m.indices.len,
+            floatsOf(m).ptr,
+            m.vertices.len,
+            @sizeOf(Vertex),
+            @intCast(self.resolution),
+            self.options,
+        );
+    }
+
+    fn original(self: *RemeshCase) void {
+        std.mem.doNotOptimizeAway(self.call(self.destination.ptr, self.destination.len / 9));
+    }
+
+    fn port(self: *RemeshCase) void {
+        const count = mo.remesh(
+            self.gpa,
+            self.destination,
+            self.mesh.indices,
+            .init(floatsOf(self.mesh), vertex_floats),
+            self.resolution,
+            @fromBackingInt(self.options),
+        ) catch unreachable;
+        std.mem.doNotOptimizeAway(count);
     }
 };

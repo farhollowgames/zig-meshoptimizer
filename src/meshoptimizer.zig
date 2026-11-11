@@ -41,6 +41,11 @@ pub const generateAdjacencyIndexBuffer = indexgenerator.generateAdjacencyIndexBu
 pub const generateTessellationIndexBuffer = indexgenerator.generateTessellationIndexBuffer;
 pub const generateProvokingIndexBuffer = indexgenerator.generateProvokingIndexBuffer;
 
+pub const remesher = @import("remesher.zig");
+pub const RemeshOptions = remesher.RemeshOptions;
+pub const remesh = remesher.remesh;
+
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("convert.zig");
 }

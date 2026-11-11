@@ -35,5 +35,7 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | partition.cpp | `partitionClusters` | not started |
 | opacitymap.cpp | `opacityMapMeasure`, `opacityMapRasterize`, `opacityMapEntrySize`, `opacityMapCompact` | not started |
 | tangentspace.cpp | `generateTangents`, `generateNormals` | not started |
-| remesher.cpp | `remesh` | not started |
+| remesher.cpp | `remesh` (resolutions 4 to 256; no destination: the bound; a destination: the exact count, cut off at its capacity) | benchmarked |
+| remesher.cpp | options `RemeshShell` (`shell`), `RemeshSolve` (`solve`) | benchmarked |
+| remesher.cpp | the original's hidden internal debug bit 30 (`internal_debug`, not in meshoptimizer.h) | oracle-tested |
 | meshoptimizer.h | C++ index-type template wrappers (16-bit indices) | not started |
