@@ -96,13 +96,13 @@ fn checkStrip(indices: []const u32, vertex_count: usize, restart_index: u32) !vo
         vertex_count,
         restart_index,
     );
-    const got_size = try mo.stripify(gpa, got, indices, vertex_count, restart_index);
+    const got_size = try mo.stripify(u32, gpa, got, indices, vertex_count, restart_index);
     try common.expectSameValue(usize, "strip size", want_size, got_size);
     try common.expectSame(u32, "strip", want[0..want_size], got[0..got_size]);
 
     // Again, into a buffer holding other values.
     @memset(got, 0x55555555);
-    const again = try mo.stripify(gpa, got, indices, vertex_count, restart_index);
+    const again = try mo.stripify(u32, gpa, got, indices, vertex_count, restart_index);
     try common.expectSame(u32, "strip again", want[0..want_size], got[0..again]);
 
     try checkUnstrip(want[0..want_size], restart_index);
@@ -146,12 +146,12 @@ fn checkUnstrip(strip: []const u32, restart_index: u32) !void {
     const got = try gpa.alloc(u32, bound);
     defer gpa.free(got);
     const want_size = c.meshopt_unstripify(want.ptr, strip.ptr, strip.len, restart_index);
-    const got_size = mo.unstripify(got, strip, restart_index);
+    const got_size = mo.unstripify(u32, got, strip, restart_index);
     try common.expectSameValue(usize, "list size", want_size, got_size);
     try common.expectSame(u32, "list", want[0..want_size], got[0..got_size]);
 
     // Again, into a buffer holding other values.
     @memset(got, 0x55555555);
-    const again = mo.unstripify(got, strip, restart_index);
+    const again = mo.unstripify(u32, got, strip, restart_index);
     try common.expectSame(u32, "list again", want[0..want_size], got[0..again]);
 }

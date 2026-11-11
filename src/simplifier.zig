@@ -21,6 +21,7 @@ const assert = std.debug.assert;
 const convert = @import("convert.zig");
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 const strided = @import("strided.zig");
 const VertexFloats = strided.VertexFloats;
 const VertexFloatsMut = strided.VertexFloatsMut;
@@ -2533,9 +2534,10 @@ fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) f32
 /// `simplifyWithUpdate` does; the result then goes to `destination`, which
 /// may be `indices` itself.
 pub fn simplifyEdge(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: anytype,
     attributes: anytype,
     attribute_weights: []const f32,
@@ -2545,6 +2547,7 @@ pub fn simplifyEdge(
     options: SimplifyOptions,
     result_error: ?*f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     const Floats = @TypeOf(positions);
     if (comptime (Floats != VertexFloats and Floats != VertexFloatsMut) or
         @TypeOf(attributes) != Floats)
@@ -2569,8 +2572,7 @@ pub fn simplifyEdge(
     var scratch: Scratch = .init(gpa);
     defer scratch.deinit();
 
-    const result = destination[0..indices.len];
-    if (result.ptr != indices.ptr) @memcpy(result, indices);
+    const result = try workIndices(Index, &scratch, destination, indices);
 
     // A remap to the vertices the indices use, and indices and a vertex
     // count rewritten to it, keep the work below small. The errors are then
@@ -2948,11 +2950,39 @@ pub fn simplifyEdge(
     if (sparse_remap) |s| {
         for (result[0..result_count]) |*r| r.* = s[r.*];
     }
+    narrowIndices(Index, destination, result);
 
     // The error was squared; it goes out linear.
     if (result_error) |out| out.* = @sqrt(result_error_squared) * error_scale;
 
     return result_count;
+}
+
+/// The indices the edge-collapse and prune passes rewrite in place: for
+/// `u32`, `destination` itself, holding `indices`; for `u16`, a copy of
+/// `indices` widened in `scratch`, which `narrowIndices` writes back, as
+/// the original's 16-bit versions do.
+fn workIndices(
+    comptime Index: type,
+    scratch: *Scratch,
+    destination: []Index,
+    indices: []const Index,
+) Allocator.Error![]u32 {
+    if (Index == u32) {
+        const result = destination[0..indices.len];
+        if (result.ptr != indices.ptr) @memcpy(result, indices);
+        return result;
+    }
+    const result = try scratch.alloc(u32, indices.len);
+    for (result, indices) |*r, index| r.* = index;
+    return result;
+}
+
+/// Writes the 32-bit `result` to `destination`, cut to `Index`; nothing for
+/// `u32`, whose result is `destination` already.
+fn narrowIndices(comptime Index: type, destination: []Index, result: []const u32) void {
+    if (Index == u32) return;
+    for (destination[0..result.len], result) |*d, r| d.* = @truncate(r);
 }
 
 fn debugBits(kind: Kind, on_loop: bool) u32 {
@@ -2973,20 +3003,23 @@ fn debugBits(kind: Kind, on_loop: bool) u32 {
 /// 1% deformation) unless `options.error_absolute` is set; `result_error`,
 /// if given, receives the error reached, in the same units.
 pub fn simplify(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
     target_index_count: usize,
     target_error: f32,
     options: SimplifyOptions,
     result_error: ?*f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     // simplifyWithUpdate moves vertices.
     assert(!options.internal_solve);
 
     const no_attributes: VertexFloats = .{ .data = &.{}, .stride = 1 };
     return simplifyEdge(
+        Index,
         gpa,
         destination,
         indices,
@@ -3010,9 +3043,10 @@ pub fn simplify(
 ///
 /// `vertex_lock`, if given, holds flags for every vertex.
 pub fn simplifyWithAttributes(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
     attributes: VertexFloats,
     attribute_weights: []const f32,
@@ -3022,10 +3056,12 @@ pub fn simplifyWithAttributes(
     options: SimplifyOptions,
     result_error: ?*f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     // simplifyWithUpdate moves vertices.
     assert(!options.internal_solve);
 
     return simplifyEdge(
+        Index,
         gpa,
         destination,
         indices,
@@ -3047,8 +3083,9 @@ pub fn simplifyWithAttributes(
 /// as they are). Copy the vertices first if the originals are still
 /// needed, and compact them with `optimizeVertexFetch` after.
 pub fn simplifyWithUpdate(
+    comptime Index: type,
     gpa: Allocator,
-    indices: []u32,
+    indices: []Index,
     positions: VertexFloatsMut,
     attributes: VertexFloatsMut,
     attribute_weights: []const f32,
@@ -3058,10 +3095,12 @@ pub fn simplifyWithUpdate(
     options: SimplifyOptions,
     result_error: ?*f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     var solve = options;
     solve.internal_solve = true;
 
     return simplifyEdge(
+        Index,
         gpa,
         indices,
         indices,
@@ -3088,15 +3127,17 @@ pub fn simplifyWithUpdate(
 /// and may be `indices` itself. `vertex_lock`, if given, holds flags for
 /// every vertex; set `lock` alike on all vertices of a position.
 pub fn simplifySloppy(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
     vertex_lock: ?[]const SimplifyVertexFlags,
     target_index_count: usize,
     target_error: f32,
     result_error: ?*f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     assert(target_index_count <= indices.len);
@@ -3109,6 +3150,14 @@ pub fn simplifySloppy(
 
     var scratch: Scratch = .init(gpa);
     defer scratch.deinit();
+
+    // 16-bit indices are widened, and the result cut back, as the
+    // original's 16-bit version does; the filter then works in place.
+    const wide: ?[]u32 = if (Index == u32) null else try scratch.alloc(u32, indices.len);
+    if (wide) |w| {
+        for (w, indices) |*to, from| to.* = from;
+    }
+    const source: []const u32 = if (Index == u32) indices else wide.?;
 
     const vertex_positions = try scratch.alloc(Vector3, vertex_count);
     _ = rescalePositions(vertex_positions, positions, vertex_count, null, null);
@@ -3131,7 +3180,7 @@ pub fn simplifySloppy(
     // up the search and gives the answer when no larger grid will do.
     if (min_grid > 1 or vertex_lock != null) {
         computeVertexIds(vertex_ids, vertex_positions, vertex_lock, min_grid);
-        min_triangles = countTriangles(vertex_ids, indices);
+        min_triangles = countTriangles(vertex_ids, source);
     }
 
     // Start from a guess instead of the middle: the triangle count usually
@@ -3148,7 +3197,7 @@ pub fn simplifySloppy(
         else if (grid_size >= max_grid) max_grid - 1 else grid_size;
 
         computeVertexIds(vertex_ids, vertex_positions, vertex_lock, grid_size);
-        const triangles = countTriangles(vertex_ids, indices);
+        const triangles = countTriangles(vertex_ids, source);
 
         const tip = interpolate(
             toFloat(target_index_count / 3),
@@ -3194,7 +3243,7 @@ pub fn simplifySloppy(
     const cell_quadrics = try scratch.alloc(Quadric, cell_count);
     @memset(cell_quadrics, .zero);
 
-    fillCellQuadrics(cell_quadrics, indices, vertex_positions, vertex_cells);
+    fillCellQuadrics(cell_quadrics, source, vertex_positions, vertex_cells);
 
     // The vertex of least error in each cell.
     const cell_remap = try scratch.alloc(u32, cell_count);
@@ -3212,7 +3261,9 @@ pub fn simplifySloppy(
     const tritable = try scratch.alloc(u32, hashBuckets(min_triangles));
 
     // The only write to destination, which lets it be indices.
-    const write = filterTriangles(destination, tritable, indices, vertex_cells, cell_remap);
+    const result: []u32 = if (Index == u32) destination else wide.?;
+    const write = filterTriangles(result, tritable, source, vertex_cells, cell_remap);
+    narrowIndices(Index, destination, result[0..write]);
 
     if (result_error) |out| out.* = @sqrt(max_error);
 
@@ -3225,12 +3276,14 @@ pub fn simplifySloppy(
 /// result uses the original vertices. `destination` needs room for every
 /// index and may be `indices` itself.
 pub fn simplifyPrune(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
     target_error: f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     assert(target_error >= 0);
@@ -3240,8 +3293,7 @@ pub fn simplifyPrune(
     var scratch: Scratch = .init(gpa);
     defer scratch.deinit();
 
-    const result = destination[0..indices.len];
-    if (result.ptr != indices.ptr) @memcpy(result, indices);
+    const result = try workIndices(Index, &scratch, destination, indices);
 
     // Each vertex's first vertex of the same position.
     const remap = try scratch.alloc(u32, vertex_count);
@@ -3251,20 +3303,22 @@ pub fn simplifyPrune(
     _ = rescalePositions(vertex_positions, positions, vertex_count, null, null);
 
     const components = try scratch.alloc(u32, vertex_count);
-    const component_count = buildComponents(components, indices, remap);
+    const component_count = buildComponents(components, result, remap);
 
     // Four floats per component, as measureComponents needs scratch.
     const component_errors = try scratch.alloc(f32, component_count * 4);
     measureComponents(component_errors, component_count, components, vertex_positions);
 
     var component_nexterror: f32 = 0;
-    return pruneComponents(
+    const count = pruneComponents(
         result,
         components,
         component_errors,
         target_error * target_error,
         &component_nexterror,
     );
+    narrowIndices(Index, destination, result[0..count]);
+    return count;
 }
 
 /// Reduces a point cloud to about `target_vertex_count` points, merging

@@ -10,6 +10,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 const VertexFloats = @import("strided.zig").VertexFloats;
 const quantizeUnorm = @import("quantization.zig").quantizeUnorm;
 
@@ -17,8 +18,9 @@ const quantizeUnorm = @import("quantization.zig").quantizeUnorm;
 /// the mesh's centroid along its average normal. Clusters facing out of the
 /// mesh score high.
 fn calculateSortData(
+    comptime Index: type,
     sort_data: []f32,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     clusters: []const u32,
 ) void {
@@ -146,7 +148,8 @@ fn calculateSortOrderRadix(sort_order: []u32, sort_data: []const f32, sort_keys:
 /// fewer than `cache_size` vertices went in after it. Returns how many
 /// were missing.
 fn updateCache(
-    triangle: *const [3]u32,
+    comptime Index: type,
+    triangle: *const [3]Index,
     cache_size: u32,
     cache_timestamps: []u32,
     timestamp: *u32,
@@ -167,8 +170,9 @@ fn updateCache(
 /// Writes the first triangle of each cluster that starts with a triangle
 /// missing the cache on all three vertices, and returns the cluster count.
 fn generateHardBoundaries(
+    comptime Index: type,
     destination: []u32,
-    indices: []const u32,
+    indices: []const Index,
     cache_size: u32,
     cache_timestamps: []u32,
 ) usize {
@@ -181,7 +185,8 @@ fn generateHardBoundaries(
     var result: usize = 0;
 
     for (0..face_count) |i| {
-        const m = updateCache(indices[i * 3 ..][0..3], cache_size, cache_timestamps, &timestamp);
+        const triangle = indices[i * 3 ..][0..3];
+        const m = updateCache(Index, triangle, cache_size, cache_timestamps, &timestamp);
 
         // A triangle missing all three vertices usually starts a new patch
         // of the mesh, disjoint from the vertices before; it sometimes comes
@@ -202,8 +207,9 @@ fn generateHardBoundaries(
 /// `threshold` times the cluster's own cache misses per triangle, writes
 /// the first triangle of each new cluster, and returns their count.
 fn generateSoftBoundaries(
+    comptime Index: type,
     destination: []u32,
-    indices: []const u32,
+    indices: []const Index,
     clusters: []const u32,
     cache_size: u32,
     threshold: f32,
@@ -228,7 +234,13 @@ fn generateSoftBoundaries(
 
         for (start..end) |i| {
             const triangle = indices[i * 3 ..][0..3];
-            cluster_misses += updateCache(triangle, cache_size, cache_timestamps, &timestamp);
+            cluster_misses += updateCache(
+                Index,
+                triangle,
+                cache_size,
+                cache_timestamps,
+                &timestamp,
+            );
         }
 
         const cluster_acmr = @as(f32, @floatFromInt(cluster_misses)) /
@@ -247,7 +259,7 @@ fn generateSoftBoundaries(
 
         for (start..end) |i| {
             const triangle = indices[i * 3 ..][0..3];
-            const m = updateCache(triangle, cache_size, cache_timestamps, &timestamp);
+            const m = updateCache(Index, triangle, cache_size, cache_timestamps, &timestamp);
 
             running_misses += m;
             running_faces += 1;
@@ -289,12 +301,14 @@ fn generateSoftBoundaries(
 /// buffer of several draw calls needs a call per range. `destination` may
 /// be `indices` itself.
 pub fn optimizeOverdraw(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
     threshold: f32,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     const vertex_count = positions.count();
@@ -307,7 +321,7 @@ pub fn optimizeOverdraw(
 
     var source = indices;
     if (destination.ptr == indices.ptr) {
-        const copy = try scratch.alloc(u32, indices.len);
+        const copy = try scratch.alloc(Index, indices.len);
         @memcpy(copy, indices);
         source = copy;
     }
@@ -319,6 +333,7 @@ pub fn optimizeOverdraw(
     // Hard boundaries where a triangle misses the cache on all its vertices.
     const hard_clusters = try scratch.alloc(u32, source.len / 3);
     const hard_cluster_count = generateHardBoundaries(
+        Index,
         hard_clusters,
         source,
         cache_size,
@@ -328,6 +343,7 @@ pub fn optimizeOverdraw(
     // Soft boundaries within them.
     const soft_clusters = try scratch.alloc(u32, source.len / 3 + 1);
     const soft_cluster_count = generateSoftBoundaries(
+        Index,
         soft_clusters,
         source,
         hard_clusters[0..hard_cluster_count],
@@ -339,7 +355,7 @@ pub fn optimizeOverdraw(
     const clusters = soft_clusters[0..soft_cluster_count];
 
     const sort_data = try scratch.alloc(f32, clusters.len);
-    calculateSortData(sort_data, source, positions, clusters);
+    calculateSortData(Index, sort_data, source, positions, clusters);
 
     const sort_keys = try scratch.alloc(u16, clusters.len);
     const sort_order = try scratch.alloc(u32, clusters.len);
@@ -369,5 +385,5 @@ const testing = std.testing;
 
 test "an empty mesh is left alone" {
     var destination: [0]u32 = .{};
-    try optimizeOverdraw(testing.allocator, &destination, &.{}, .init(&.{}, 3), 1.05);
+    try optimizeOverdraw(u32, testing.allocator, &destination, &.{}, .init(&.{}, 3), 1.05);
 }

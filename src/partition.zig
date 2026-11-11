@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
+const checkIndex = @import("index.zig").check;
 
 // Past this depth the spatial merge bisects, which bounds the recursion on
 // malformed inputs.
@@ -133,9 +134,10 @@ const ClusterAdjacency = struct {
 /// Copies each cluster's indices to `data`, without repeats, and writes
 /// where each cluster starts to `offsets`, and where the last ends.
 fn filterClusterIndices(
+    comptime Index: type,
     data: []u32,
     offsets: []u32,
-    cluster_indices: []const u32,
+    cluster_indices: []const Index,
     cluster_index_counts: []const u32,
     used: []u8,
 ) void {
@@ -538,14 +540,16 @@ fn mergeSpatial(
 /// refer to `vertex_count` vertices, which `positions`, if given, holds.
 /// `destination` holds a partition for each cluster.
 pub fn partitionClusters(
+    comptime Index: type,
     gpa: Allocator,
     destination: []u32,
-    cluster_indices: []const u32,
+    cluster_indices: []const Index,
     cluster_index_counts: []const u32,
     positions: ?VertexFloats,
     vertex_count: usize,
     target_partition_size: usize,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     if (positions) |p| assert(p.stride >= 3 and p.stride <= 64);
     assert(target_partition_size > 0);
 
@@ -563,6 +567,7 @@ pub fn partitionClusters(
 
     // The clusters' indices without repeats.
     filterClusterIndices(
+        Index,
         cluster_newindices,
         cluster_offsets,
         cluster_indices,
@@ -710,6 +715,7 @@ test "clusters that share vertices group" {
     const counts = [_]u32{ 3, 3, 3, 3 };
     var destination: [4]u32 = undefined;
     const partitions = try partitionClusters(
+        u32,
         testing.allocator,
         &destination,
         &indices,

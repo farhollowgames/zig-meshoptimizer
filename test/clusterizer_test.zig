@@ -287,6 +287,7 @@ fn runPort(builder: Builder, out: Outputs, indices: []const u32, positions: Posi
     const view = positions.view();
     return switch (builder) {
         .standard => |s| mo.buildMeshlets(
+            u32,
             gpa,
             out.meshlets,
             out.vertices,
@@ -298,6 +299,7 @@ fn runPort(builder: Builder, out: Outputs, indices: []const u32, positions: Posi
             s.cone_weight,
         ),
         .scan => |s| mo.buildMeshletsScan(
+            u32,
             gpa,
             out.meshlets,
             out.vertices,
@@ -308,6 +310,7 @@ fn runPort(builder: Builder, out: Outputs, indices: []const u32, positions: Posi
             s.max_triangles,
         ),
         .flex => |s| mo.buildMeshletsFlex(
+            u32,
             gpa,
             out.meshlets,
             out.vertices,
@@ -321,6 +324,7 @@ fn runPort(builder: Builder, out: Outputs, indices: []const u32, positions: Posi
             s.split_factor,
         ),
         inline .spatial, .spatial_scalar => |s, tag| mo.clusterizer.buildMeshletsSpatialMerge(
+            u32,
             if (tag == .spatial) mo.clusterizer.target_box_merge else .scalar,
             gpa,
             out.meshlets,

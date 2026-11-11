@@ -32,13 +32,13 @@ fn checkVertexFetchRemap(indices: []const u32, vertex_count: usize) !void {
         indices.len,
         vertex_count,
     );
-    const got_unique = mo.optimizeVertexFetchRemap(got, indices, vertex_count);
+    const got_unique = mo.optimizeVertexFetchRemap(u32, got, indices, vertex_count);
     try common.expectSameValue(usize, "used vertices", want_unique, got_unique);
     try common.expectSame(u32, "remap", want, got);
 
     // Again, into a buffer holding other values.
     @memset(got, 0x55555555);
-    _ = mo.optimizeVertexFetchRemap(got, indices, vertex_count);
+    _ = mo.optimizeVertexFetchRemap(u32, got, indices, vertex_count);
     try common.expectSame(u32, "remap again", want, got);
 }
 
@@ -112,7 +112,14 @@ fn checkVertexFetch(vertices: []const u8, vertex_size: usize, indices: []const u
         vertex_count,
         vertex_size,
     );
-    const got_unique = try mo.optimizeVertexFetch(gpa, got, got_indices, vertices, vertex_size);
+    const got_unique = try mo.optimizeVertexFetch(
+        u32,
+        gpa,
+        got,
+        got_indices,
+        vertices,
+        vertex_size,
+    );
     try common.expectSameValue(usize, "used vertices", want_unique, got_unique);
     try common.expectSame(u8, "vertices", want, got);
     try common.expectSame(u32, "indices", want_indices, got_indices);
@@ -130,7 +137,7 @@ fn checkVertexFetch(vertices: []const u8, vertex_size: usize, indices: []const u
         vertex_count,
         vertex_size,
     );
-    const got_in_place = try mo.optimizeVertexFetch(gpa, got, got_indices, got, vertex_size);
+    const got_in_place = try mo.optimizeVertexFetch(u32, gpa, got, got_indices, got, vertex_size);
     try common.expectSameValue(usize, "used vertices in place", want_in_place, got_in_place);
     try common.expectSame(u8, "vertices in place", want, got);
     try common.expectSame(u32, "indices in place", want_indices, got_indices);
@@ -138,7 +145,7 @@ fn checkVertexFetch(vertices: []const u8, vertex_size: usize, indices: []const u
     // Again, into a buffer holding other values: the used vertices match.
     @memcpy(got_indices, indices);
     @memset(got, 0x55);
-    const again = try mo.optimizeVertexFetch(gpa, got, got_indices, vertices, vertex_size);
+    const again = try mo.optimizeVertexFetch(u32, gpa, got, got_indices, vertices, vertex_size);
     const used = again * vertex_size;
     try common.expectSame(u8, "vertices again", want[0..used], got[0..used]);
     try common.expectSame(u32, "indices again", want_indices, got_indices);

@@ -13,10 +13,12 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
+const checkIndex = @import("index.zig").check;
 const indexgenerator = @import("indexgenerator.zig");
 const hashBuckets = indexgenerator.hashBuckets;
 const hashLookup = indexgenerator.hashLookup;
 const truncate = @import("convert.zig").truncate;
+const cosf = @import("cosf.zig").cosf;
 
 /// How `generateTangents` weighs and falls back. Each field is the bit of
 /// the original's `meshopt_Tangent` flag of the same name.
@@ -51,20 +53,21 @@ const Normal = struct {
 };
 
 /// The vertex of corner `corner`.
-inline fn vertexOf(indices: ?[]const u32, corner: usize) u32 {
+inline fn vertexOf(comptime Index: type, indices: ?[]const Index, corner: usize) u32 {
     return if (indices) |list| list[corner] else @intCast(corner);
 }
 
 fn computeFaceTangents(
+    comptime Index: type,
     result: []Tangent,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     positions: VertexFloats,
     uvs: VertexFloats,
 ) void {
     for (result, 0..) |*tangent, i| {
-        const a = vertexOf(indices, i * 3 + 0);
-        const b = vertexOf(indices, i * 3 + 1);
-        const c = vertexOf(indices, i * 3 + 2);
+        const a = vertexOf(Index, indices, i * 3 + 0);
+        const b = vertexOf(Index, indices, i * 3 + 1);
+        const c = vertexOf(Index, indices, i * 3 + 2);
 
         const pa = positions.vec3(a);
         const pb = positions.vec3(b);
@@ -108,11 +111,16 @@ fn computeFaceTangents(
     }
 }
 
-fn computeFaceNormals(result: []Normal, indices: ?[]const u32, positions: VertexFloats) void {
+fn computeFaceNormals(
+    comptime Index: type,
+    result: []Normal,
+    indices: ?[]const Index,
+    positions: VertexFloats,
+) void {
     for (result, 0..) |*normal, i| {
-        const pa = positions.vec3(vertexOf(indices, i * 3 + 0));
-        const pb = positions.vec3(vertexOf(indices, i * 3 + 1));
-        const pc = positions.vec3(vertexOf(indices, i * 3 + 2));
+        const pa = positions.vec3(vertexOf(Index, indices, i * 3 + 0));
+        const pb = positions.vec3(vertexOf(Index, indices, i * 3 + 1));
+        const pc = positions.vec3(vertexOf(Index, indices, i * 3 + 2));
 
         const dp1x = pb[0] - pa[0];
         const dp1y = pb[1] - pa[1];
@@ -220,8 +228,9 @@ const CornerAdjacency = struct {
 };
 
 fn buildCornerAdjacency(
+    comptime Index: type,
     scratch: *Scratch,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     index_count: usize,
     remap: []const u32,
 ) !CornerAdjacency {
@@ -238,7 +247,7 @@ fn buildCornerAdjacency(
     @memset(offsets, 0);
 
     for (0..index_count) |i| {
-        const v = remap[vertexOf(indices, i)];
+        const v = remap[vertexOf(Index, indices, i)];
         assert(v < vertex_count);
 
         offsets[v] += 1;
@@ -257,9 +266,9 @@ fn buildCornerAdjacency(
 
     // The corners.
     for (0..face_count) |i| {
-        const a = remap[vertexOf(indices, i * 3 + 0)];
-        const b = remap[vertexOf(indices, i * 3 + 1)];
-        const c = remap[vertexOf(indices, i * 3 + 2)];
+        const a = remap[vertexOf(Index, indices, i * 3 + 0)];
+        const b = remap[vertexOf(Index, indices, i * 3 + 1)];
+        const c = remap[vertexOf(Index, indices, i * 3 + 2)];
         const triangle: u32 = @intCast(i << 2);
 
         adjacency.data[offsets[a]] = triangle | 0;
@@ -291,11 +300,12 @@ fn follow2(parents: []u32, start: u32) u32 {
 
 /// Merges the tangent groups of the corners `data` around one vertex.
 fn mergeTangentGroups(
+    comptime Index: type,
     groups: []u32,
     facegroups: []u32,
     facesign: []u8,
     data: []const u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     remap: []const u32,
 ) void {
     for (data, 0..) |di, i| {
@@ -303,16 +313,16 @@ fn mergeTangentGroups(
         const cib = ti * 3 + next[(di & 3) + 0];
         const cic = ti * 3 + next[(di & 3) + 1];
 
-        const nib = remap[vertexOf(indices, cib)];
-        const nic = remap[vertexOf(indices, cic)];
+        const nib = remap[vertexOf(Index, indices, cib)];
+        const nic = remap[vertexOf(Index, indices, cic)];
 
         for (data[i + 1 ..]) |dj| {
             const tj = dj >> 2;
             const cjb = tj * 3 + next[(dj & 3) + 0];
             const cjc = tj * 3 + next[(dj & 3) + 1];
 
-            const njb = remap[vertexOf(indices, cjb)];
-            const njc = remap[vertexOf(indices, cjc)];
+            const njb = remap[vertexOf(Index, indices, cjb)];
+            const njc = remap[vertexOf(Index, indices, cjc)];
 
             // Adjacent triangles merge when their orientations agree or
             // either is degenerate.
@@ -346,9 +356,10 @@ fn mergeTangentGroups(
 
 /// Merges the normal groups of the corners `data` around one vertex.
 fn mergeNormalGroups(
+    comptime Index: type,
     groups: []u32,
     data: []const u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     remap: []const u32,
     face_normals: []const Normal,
     crease_cutoff: f32,
@@ -360,8 +371,8 @@ fn mergeNormalGroups(
         const cib = ti * 3 + next[(di & 3) + 0];
         const cic = ti * 3 + next[(di & 3) + 1];
 
-        const nib = remap[vertexOf(indices, cib)];
-        const nic = remap[vertexOf(indices, cic)];
+        const nib = remap[vertexOf(Index, indices, cib)];
+        const nic = remap[vertexOf(Index, indices, cic)];
 
         const fi = face_normals[ti];
 
@@ -372,8 +383,8 @@ fn mergeNormalGroups(
             const cjb = tj * 3 + next[(dj & 3) + 0];
             const cjc = tj * 3 + next[(dj & 3) + 1];
 
-            const njb = remap[vertexOf(indices, cjb)];
-            const njc = remap[vertexOf(indices, cjc)];
+            const njb = remap[vertexOf(Index, indices, cjb)];
+            const njc = remap[vertexOf(Index, indices, cjc)];
 
             const fj = face_normals[tj];
 
@@ -412,9 +423,10 @@ inline fn optacos(x: f32) f32 {
 }
 
 fn accumulateTangents(
+    comptime Index: type,
     result: []f32,
     groups: []const u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     face_tangents: []const Tangent,
     positions: VertexFloats,
     normals: VertexFloats,
@@ -426,9 +438,9 @@ fn accumulateTangents(
         for (0..3) |k| {
             const r = result[@as(usize, groups[i * 3 + k]) * 4 ..][0..3];
 
-            const a = vertexOf(indices, i * 3 + k);
-            const b = vertexOf(indices, i * 3 + next[k]);
-            const c = vertexOf(indices, i * 3 + next[k + 1]);
+            const a = vertexOf(Index, indices, i * 3 + k);
+            const b = vertexOf(Index, indices, i * 3 + next[k]);
+            const c = vertexOf(Index, indices, i * 3 + next[k + 1]);
 
             const pa = positions.vec3(a);
             const pb = positions.vec3(b);
@@ -486,9 +498,10 @@ fn accumulateTangents(
 }
 
 fn accumulateNormals(
+    comptime Index: type,
     result: []f32,
     groups: []const u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     face_normals: []const Normal,
     positions: VertexFloats,
 ) void {
@@ -496,9 +509,9 @@ fn accumulateNormals(
         for (0..3) |k| {
             const r = result[@as(usize, groups[i * 3 + k]) * 3 ..][0..3];
 
-            const pa = positions.vec3(vertexOf(indices, i * 3 + k));
-            const pb = positions.vec3(vertexOf(indices, i * 3 + next[k]));
-            const pc = positions.vec3(vertexOf(indices, i * 3 + next[k + 1]));
+            const pa = positions.vec3(vertexOf(Index, indices, i * 3 + k));
+            const pb = positions.vec3(vertexOf(Index, indices, i * 3 + next[k]));
+            const pc = positions.vec3(vertexOf(Index, indices, i * 3 + next[k + 1]));
 
             // The corner's angle, for weighting.
             const dp1x = pb[0] - pa[0];
@@ -603,14 +616,16 @@ fn smoothNormals(
 /// meshes are faster. `normals` are unit normals, and `uvs` texture
 /// coordinates (2 floats), for every vertex of `positions`.
 pub fn generateTangents(
+    comptime Index: type,
     gpa: Allocator,
     result: []f32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     positions: VertexFloats,
     normals: VertexFloats,
     uvs: VertexFloats,
     options: TangentOptions,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     const vertex_count = positions.count();
     const index_count = if (indices) |list| list.len else vertex_count;
     assert(index_count % 3 == 0);
@@ -630,10 +645,10 @@ pub fn generateTangents(
     const hasher: VertexHasher(false) = .{ .positions = positions, .normals = normals, .uvs = uvs };
     try buildVertexRemap(&scratch, remap, hasher);
 
-    const adjacency = try buildCornerAdjacency(&scratch, indices, index_count, remap);
+    const adjacency = try buildCornerAdjacency(Index, &scratch, indices, index_count, remap);
 
     const face_tangents = try scratch.alloc(Tangent, face_count);
-    computeFaceTangents(face_tangents, indices, positions, uvs);
+    computeFaceTangents(Index, face_tangents, indices, positions, uvs);
 
     // Corner tangent groups: triangles around a vertex with the same
     // orientation merge in strips.
@@ -653,7 +668,7 @@ pub fn generateTangents(
     for (0..vertex_count) |i| {
         const corners = adjacency.data[adjacency.offsets[i]..adjacency.offsets[i + 1]];
         if (corners.len > 0) {
-            mergeTangentGroups(groups, facegroups, facesign, corners, indices, remap);
+            mergeTangentGroups(Index, groups, facegroups, facesign, corners, indices, remap);
         }
     }
 
@@ -661,7 +676,7 @@ pub fn generateTangents(
 
     // Each group gathers its tangents.
     @memset(result[0 .. index_count * 4], 0);
-    accumulateTangents(result, groups, indices, face_tangents, positions, normals, options);
+    accumulateTangents(Index, result, groups, indices, face_tangents, positions, normals, options);
 
     // Each face's sign from its face group.
     for (0..face_count) |i| {
@@ -709,13 +724,15 @@ pub fn generateTangents(
 /// With `indices` null, every vertex is a corner; indexing does not change
 /// the normals, but indexed meshes are faster.
 pub fn generateNormals(
+    comptime Index: type,
     gpa: Allocator,
     result: []f32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     positions: VertexFloats,
     crease_angle: f32,
     smoothing: f32,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     const vertex_count = positions.count();
     const index_count = if (indices) |list| list.len else vertex_count;
     assert(index_count % 3 == 0);
@@ -741,10 +758,10 @@ pub fn generateNormals(
     };
     try buildVertexRemap(&scratch, remap, hasher);
 
-    const adjacency = try buildCornerAdjacency(&scratch, indices, index_count, remap);
+    const adjacency = try buildCornerAdjacency(Index, &scratch, indices, index_count, remap);
 
     const face_normals = try scratch.alloc(Normal, face_count);
-    computeFaceNormals(face_normals, indices, positions);
+    computeFaceNormals(Index, face_normals, indices, positions);
 
     // Corner normal groups: triangles around a vertex with similar normals
     // merge in strips.
@@ -754,7 +771,7 @@ pub fn generateNormals(
     for (0..vertex_count) |i| {
         const corners = adjacency.data[adjacency.offsets[i]..adjacency.offsets[i + 1]];
         if (corners.len > 0) {
-            mergeNormalGroups(groups, corners, indices, remap, face_normals, crease_cutoff);
+            mergeNormalGroups(Index, groups, corners, indices, remap, face_normals, crease_cutoff);
         }
     }
 
@@ -762,7 +779,7 @@ pub fn generateNormals(
 
     // Each group gathers its normals.
     @memset(result[0 .. index_count * 3], 0);
-    accumulateNormals(result, groups, indices, face_normals, positions);
+    accumulateNormals(Index, result, groups, indices, face_normals, positions);
 
     // Smoothing expects unit normals, so roots are normalized first.
     for (groups, 0..) |group, i| {
@@ -799,94 +816,6 @@ pub fn generateNormals(
     }
 }
 
-/// glibc's sinf and cosf constants (sincosf_data.c): the signs by
-/// quadrant, 2/pi scaled by 2^24, pi/2, and the cosine and sine
-/// polynomials, the cosine's negated in the second table.
-const SincosTable = struct {
-    sign: [4]f64,
-    hpi_inv: f64,
-    hpi: f64,
-    c0: f64,
-    c1: f64,
-    s1: f64,
-    c2: f64,
-    s2: f64,
-    c3: f64,
-    s3: f64,
-    c4: f64,
-};
-
-const sincos_table = [2]SincosTable{
-    .{
-        .sign = .{ 1, -1, -1, 1 },
-        .hpi_inv = 0x1.45f306dc9c883p+23,
-        .hpi = 0x1.921fb54442d18p+0,
-        .c0 = 0x1p0,
-        .c1 = -0x1.ffffffd0c621cp-2,
-        .s1 = -0x1.555545995a603p-3,
-        .c2 = 0x1.55553e1068f19p-5,
-        .s2 = 0x1.1107605230bc4p-7,
-        .c3 = -0x1.6c087e89a359dp-10,
-        .s3 = -0x1.994eb3774cf24p-13,
-        .c4 = 0x1.99343027bf8c3p-16,
-    },
-    .{
-        .sign = .{ 1, -1, -1, 1 },
-        .hpi_inv = 0x1.45f306dc9c883p+23,
-        .hpi = 0x1.921fb54442d18p+0,
-        .c0 = -0x1p0,
-        .c1 = 0x1.ffffffd0c621cp-2,
-        .s1 = -0x1.555545995a603p-3,
-        .c2 = -0x1.55553e1068f19p-5,
-        .s2 = 0x1.1107605230bc4p-7,
-        .c3 = 0x1.6c087e89a359dp-10,
-        .s3 = -0x1.994eb3774cf24p-13,
-        .c4 = -0x1.99343027bf8c3p-16,
-    },
-};
-
-/// cosf as glibc 2.44's libm computes it with fused multiply-adds (the
-/// variant x86-64 CPUs with FMA run, and the one aarch64 builds), for
-/// |y| < 120: the angle reduced by multiples of pi/2, then a polynomial in
-/// double precision. The original takes its crease cutoff from it; Zig's
-/// own cosine rounds differently for some angles.
-fn cosf(y: f32) f32 {
-    const top12 = (@as(u32, @bitCast(y)) >> 20) & 0x7ff;
-    assert(top12 < 0x42f);
-
-    const x: f64 = y;
-
-    // |y| < 0.75: no reduction.
-    if (top12 < 0x3f4) {
-        // |y| < 2^-12.
-        if (top12 < 0x398) return 1;
-        return cosPolynomial(x * x, &sincos_table[0]);
-    }
-
-    const n = (@as(i32, @intFromFloat(x * sincos_table[0].hpi_inv)) + 0x800000) >> 24;
-    const reduced = @mulAdd(f64, -@as(f64, @floatFromInt(n)), sincos_table[0].hpi, x);
-    const table = &sincos_table[if (n & 2 != 0) 1 else 0];
-    const reduced2 = reduced * reduced;
-
-    if (n & 1 == 0) return cosPolynomial(reduced2, table);
-
-    const xs = reduced * sincos_table[0].sign[@intCast(n & 3)];
-    const s1 = @mulAdd(f64, reduced2, table.s3, table.s2);
-    const x3 = reduced2 * xs;
-    const x5 = reduced2 * x3;
-    const s = @mulAdd(f64, x3, table.s1, xs);
-    return @floatCast(@mulAdd(f64, s1, x5, s));
-}
-
-fn cosPolynomial(x2: f64, table: *const SincosTable) f32 {
-    const x4 = x2 * x2;
-    const c2 = @mulAdd(f64, x2, table.c4, table.c3);
-    const x6 = x2 * x4;
-    const c1 = @mulAdd(f64, x2, table.c1, table.c0);
-    const c = @mulAdd(f64, x4, table.c2, c1);
-    return @floatCast(@mulAdd(f64, c2, x6, c));
-}
-
 // --------------------------------------------------------
 // Tests
 // --------------------------------------------------------
@@ -898,14 +827,8 @@ test "options keep the original's bits" {
     try testing.expectEqual(2, @backingInt(TangentOptions{ .zero_fallback = true }));
 }
 
-test "the cosine at landmarks" {
-    try testing.expectEqual(1, cosf(0));
-    try testing.expectEqual(1, cosf(1e-5));
-    try testing.expectEqual(-1, cosf(3.1415927));
-    try testing.expect(@abs(cosf(1.0471976) - 0.5) < 1e-7);
-}
-
-/// glibc's cosf, for the oracle tests to check `cosf` against.
+/// The cosine the crease cutoff comes from, for the oracle tests to check
+/// against the system's libm.
 pub fn cosfForTest(y: f32) f32 {
     return cosf(y);
 }

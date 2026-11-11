@@ -487,7 +487,7 @@ fn checkIndexBuffer(indices: []const u32, vertex_count: u64, options: CheckOptio
 
         const want_size = c.meshopt_encodeIndexBuffer(want.ptr, want.len, indices.ptr, indices.len);
         @memset(got, 0xa5);
-        const got_size = mo.encodeIndexBuffer(got, indices, version) catch 0;
+        const got_size = mo.encodeIndexBuffer(u32, got, indices, version) catch 0;
         try common.expectSameValue(usize, "encodeIndexBuffer size", want_size, got_size);
         try common.expectSame(u8, "encodeIndexBuffer", want[0..want_size], got[0..got_size]);
         try expectSameEncodeRerun(mo.encodeIndexBuffer, indices, version, got, got_size);
@@ -505,7 +505,7 @@ fn checkIndexBuffer(indices: []const u32, vertex_count: u64, options: CheckOptio
         };
         for (sizes) |size| {
             const want_fit = c.meshopt_encodeIndexBuffer(want.ptr, size, indices.ptr, indices.len);
-            const got_fit = mo.encodeIndexBuffer(got[0..size], indices, version) catch 0;
+            const got_fit = mo.encodeIndexBuffer(u32, got[0..size], indices, version) catch 0;
             try common.expectSameValue(usize, "encodeIndexBuffer fit", want_fit, got_fit);
         }
 
@@ -610,7 +610,7 @@ fn checkIndexSequence(indices: []const u32, vertex_count: u64, malformed: bool) 
             indices.len,
         );
         @memset(got, 0xa5);
-        const got_size = mo.encodeIndexSequence(got, indices, version) catch 0;
+        const got_size = mo.encodeIndexSequence(u32, got, indices, version) catch 0;
         try common.expectSameValue(usize, "encodeIndexSequence size", want_size, got_size);
         try common.expectSame(u8, "encodeIndexSequence", want[0..want_size], got[0..got_size]);
         try expectSameEncodeRerun(mo.encodeIndexSequence, indices, version, got, got_size);
@@ -632,7 +632,7 @@ fn checkIndexSequence(indices: []const u32, vertex_count: u64, malformed: bool) 
                 indices.ptr,
                 indices.len,
             );
-            const got_fit = mo.encodeIndexSequence(got[0..size], indices, version) catch 0;
+            const got_fit = mo.encodeIndexSequence(u32, got[0..size], indices, version) catch 0;
             try common.expectSameValue(usize, "encodeIndexSequence fit", want_fit, got_fit);
         }
 
@@ -692,7 +692,7 @@ fn checkDecodeIndexSequence(buffer: []const u8, index_count: usize) !void {
 /// unless it gives `size` and writes what the first run, into `first`
 /// filled with 0xa5, did.
 fn expectSameEncodeRerun(
-    encode: fn ([]u8, []const u32, mo.IndexVersion) error{NoSpaceLeft}!usize,
+    encode: anytype,
     indices: []const u32,
     version: mo.IndexVersion,
     first: []const u8,
@@ -701,7 +701,7 @@ fn expectSameEncodeRerun(
     const rerun = try gpa.alloc(u8, first.len);
     defer gpa.free(rerun);
     @memset(rerun, common.rerun_fill);
-    const rerun_size = encode(rerun, indices, version) catch 0;
+    const rerun_size = encode(u32, rerun, indices, version) catch 0;
     try common.expectSameValue(usize, "encode rerun size", size, rerun_size);
     try common.expectSameRerun(u8, "encode rerun", first, 0xa5, rerun);
 }

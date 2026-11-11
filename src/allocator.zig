@@ -1,6 +1,8 @@
 //! How the library allocates: every function that needs memory takes a
 //! `std.mem.Allocator` and uses it only for scratch memory it frees before
 //! returning, in stack order, as the original's allocator hooks are used.
+//! The exception is `clusterlod.build`, which grows lists as the original's
+//! demo grows vectors, and needs a general-purpose allocator.
 //! `AllocatorCache` keeps blocks of that memory for threads to reuse.
 //!
 //! Translated from meshoptimizer's allocator.cpp and the meshopt_Allocator

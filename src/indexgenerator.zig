@@ -13,6 +13,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 const VertexFloats = @import("strided.zig").VertexFloats;
 
 /// A vertex attribute stream: each vertex's `size` bytes begin `stride`
@@ -237,9 +238,10 @@ fn buildPositionRemap(scratch: *Scratch, remap: []u32, positions: VertexFloats) 
 }
 
 fn generateRemap(
+    comptime Index: type,
     scratch: *Scratch,
     remap: []u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     index_count: usize,
     hasher: anytype,
 ) !usize {
@@ -290,9 +292,10 @@ fn remapVertices(
 }
 
 fn generateShadowBuffer(
+    comptime Index: type,
     scratch: *Scratch,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     hasher: anytype,
 ) !void {
@@ -313,14 +316,15 @@ fn generateShadowBuffer(
             remap[index] = table[entry];
         }
 
-        d.* = remap[index];
+        d.* = @intCast(remap[index]);
     }
 }
 
 fn filterTriangles(
+    comptime Index: type,
     scratch: *Scratch,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     remap: []const u32,
 ) !usize {
     const empty: TriangleKey = .{ .a = none, .b = none, .c = none };
@@ -390,12 +394,14 @@ fn checkStreams(streams: []const Stream) void {
 /// themselves if `indices` is null. Use the table with `remapVertexBuffer`
 /// and `remapIndexBuffer`.
 pub fn generateVertexRemap(
+    comptime Index: type,
     gpa: Allocator,
     destination: []u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     vertices: []const u8,
     vertex_size: usize,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(vertex_size > 0 and vertex_size <= 256);
     assert(vertices.len % vertex_size == 0);
     const vertex_count = vertices.len / vertex_size;
@@ -409,19 +415,22 @@ pub fn generateVertexRemap(
     } };
 
     const index_count = if (indices) |list| list.len else vertex_count;
-    return generateRemap(&scratch, destination[0..vertex_count], indices, index_count, hasher);
+    const remap = destination[0..vertex_count];
+    return generateRemap(Index, &scratch, remap, indices, index_count, hasher);
 }
 
 /// `generateVertexRemap` over several vertex streams, each remapped with its
 /// own `remapVertexBuffer` call after. Vertices are equal when all the bytes
 /// of every stream are. Takes 1 to 16 streams.
 pub fn generateVertexRemapMulti(
+    comptime Index: type,
     gpa: Allocator,
     destination: []u32,
-    indices: ?[]const u32,
+    indices: ?[]const Index,
     vertex_count: usize,
     streams: []const Stream,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     checkStreams(streams);
 
     var scratch: Scratch = .init(gpa);
@@ -429,7 +438,8 @@ pub fn generateVertexRemapMulti(
     const hasher: VertexStreamHasher = .{ .streams = streams };
 
     const index_count = if (indices) |list| list.len else vertex_count;
-    return generateRemap(&scratch, destination[0..vertex_count], indices, index_count, hasher);
+    const remap = destination[0..vertex_count];
+    return generateRemap(Index, &scratch, remap, indices, index_count, hasher);
 }
 
 /// `generateVertexRemap` with an equality of your own: vertices are equal
@@ -455,7 +465,8 @@ pub fn generateVertexRemapCustom(
     };
 
     const index_count = if (indices) |list| list.len else vertex_count;
-    return generateRemap(&scratch, destination[0..vertex_count], indices, index_count, hasher);
+    const remap = destination[0..vertex_count];
+    return generateRemap(u32, &scratch, remap, indices, index_count, hasher);
 }
 
 /// Writes the vertex buffer a remap table from `generateVertexRemap` gives:
@@ -493,29 +504,44 @@ pub fn remapVertexBuffer(
 
 /// Writes the index buffer a remap table from `generateVertexRemap` gives:
 /// `destination[i]` is `remap[indices[i]]`, or `remap[i]` for every vertex
-/// when `indices` is null. `destination` may be `indices` itself.
-pub fn remapIndexBuffer(destination: []u32, indices: ?[]const u32, remap: []const u32) void {
+/// when `indices` is null, cut to `Index` as the original's 16-bit template
+/// cuts it. `destination` may be `indices` itself, and for `u32` indices may
+/// overlap `remap`.
+pub fn remapIndexBuffer(
+    comptime Index: type,
+    destination: []Index,
+    indices: ?[]const Index,
+    remap: []const u32,
+) void {
+    comptime checkIndex(Index);
     const list = indices orelse {
         // Every vertex in order: a copy, which the loop below would make
         // one index at a time, unless the two overlap, as the original
-        // lets them.
-        for (remap) |index| assert(index != none);
+        // lets them; then each read may see an earlier write.
         const target = destination[0..remap.len];
         const start = @intFromPtr(remap.ptr);
         const end = start + remap.len * @sizeOf(u32);
         const target_start = @intFromPtr(target.ptr);
-        const target_end = target_start + target.len * @sizeOf(u32);
-        if (target_end <= start or end <= target_start) {
+        const target_end = target_start + target.len * @sizeOf(Index);
+        const apart = target_end <= start or end <= target_start;
+        if (Index == u32 and apart) {
+            for (remap) |r| assert(r != none);
             @memcpy(target, remap);
         } else {
-            for (target, 0..) |*d, i| d.* = remap[i];
+            // The original's template writes 16-bit indices through a
+            // buffer of its own, so they never overlap the table.
+            assert(Index == u32 or apart);
+            for (target, 0..) |*d, i| {
+                assert(remap[i] != none);
+                d.* = @truncate(remap[i]);
+            }
         }
         return;
     };
-    for (destination[0..list.len], list) |*d, index| {
-        assert(remap[index] != none);
+    for (destination[0..list.len], list) |*d, vertex| {
+        assert(remap[vertex] != none);
 
-        d.* = remap[index];
+        d.* = @truncate(remap[vertex]);
     }
 }
 
@@ -527,12 +553,14 @@ pub fn remapIndexBuffer(destination: []u32, indices: ?[]const u32, remap: []cons
 /// position. Duplicates of opposite winding stay, for double-sided
 /// rendering. `destination` may be `indices` itself.
 pub fn filterIndexBuffer(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     vertices: Stream,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     checkStreams(&.{vertices});
 
@@ -541,21 +569,23 @@ pub fn filterIndexBuffer(
     const hasher: VertexHasher = .{ .stream = vertices };
 
     const remap = try scratch.alloc(u32, vertex_count);
-    _ = try generateRemap(&scratch, remap, indices, indices.len, hasher);
+    _ = try generateRemap(Index, &scratch, remap, indices, indices.len, hasher);
 
-    return filterTriangles(&scratch, destination, indices, remap);
+    return filterTriangles(Index, &scratch, destination, indices, remap);
 }
 
 /// `filterIndexBuffer` over several vertex streams, which should hold every
 /// attribute that moves a vertex (skinning influences, say). Takes 1 to 16
 /// streams.
 pub fn filterIndexBufferMulti(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     streams: []const Stream,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     checkStreams(streams);
 
@@ -564,9 +594,9 @@ pub fn filterIndexBufferMulti(
     const hasher: VertexStreamHasher = .{ .streams = streams };
 
     const remap = try scratch.alloc(u32, vertex_count);
-    _ = try generateRemap(&scratch, remap, indices, indices.len, hasher);
+    _ = try generateRemap(Index, &scratch, remap, indices, indices.len, hasher);
 
-    return filterTriangles(&scratch, destination, indices, remap);
+    return filterTriangles(Index, &scratch, destination, indices, remap);
 }
 
 /// Writes an index buffer for passes that read only some attributes (a
@@ -574,12 +604,14 @@ pub fn filterIndexBufferMulti(
 /// bytes in `vertices` are equal to its own, padding included. Keep the
 /// original buffer for the other passes.
 pub fn generateShadowIndexBuffer(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     vertices: Stream,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     checkStreams(&.{vertices});
 
@@ -587,18 +619,20 @@ pub fn generateShadowIndexBuffer(
     defer scratch.deinit();
     const hasher: VertexHasher = .{ .stream = vertices };
 
-    try generateShadowBuffer(&scratch, destination, indices, vertex_count, hasher);
+    try generateShadowBuffer(Index, &scratch, destination, indices, vertex_count, hasher);
 }
 
 /// `generateShadowIndexBuffer` over several vertex streams. Takes 1 to 16
 /// streams.
 pub fn generateShadowIndexBufferMulti(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     streams: []const Stream,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     checkStreams(streams);
 
@@ -606,7 +640,7 @@ pub fn generateShadowIndexBufferMulti(
     defer scratch.deinit();
     const hasher: VertexStreamHasher = .{ .streams = streams };
 
-    try generateShadowBuffer(&scratch, destination, indices, vertex_count, hasher);
+    try generateShadowBuffer(Index, &scratch, destination, indices, vertex_count, hasher);
 }
 
 /// Fills `destination[0..vertex_count]` with a table that maps each vertex
@@ -645,11 +679,13 @@ pub fn generatePositionRemap(
 /// position, compared bit for bit, and a border edge's opposite vertex is
 /// the edge's own start.
 pub fn generateAdjacencyIndexBuffer(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     const vertex_count = positions.count();
@@ -696,7 +732,7 @@ pub fn generateAdjacencyIndexBuffer(
 
     i = 0;
     while (i < indices.len) : (i += 3) {
-        var patch: [6]u32 = undefined;
+        var patch: [6]Index = undefined;
 
         for (0..3) |e| {
             const from = indices[i + e];
@@ -711,7 +747,7 @@ pub fn generateAdjacencyIndexBuffer(
             patch[e * 2 + 1] = if (edge_table[oppe] == std.math.maxInt(u64))
                 from
             else
-                edge_vertex_table[oppe];
+                @intCast(edge_vertex_table[oppe]);
         }
 
         destination[i * 2 ..][0..6].* = patch;
@@ -725,11 +761,13 @@ pub fn generateAdjacencyIndexBuffer(
 /// and each corner's dominant vertex, the first with its position, at 9, 10
 /// and 11. A border edge stands in for its own opposite.
 pub fn generateTessellationIndexBuffer(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     const vertex_count = positions.count();
@@ -766,7 +804,7 @@ pub fn generateTessellationIndexBuffer(
 
     i = 0;
     while (i < indices.len) : (i += 3) {
-        var patch: [12]u32 = undefined;
+        var patch: [12]Index = undefined;
 
         for (0..3) |e| {
             const from = indices[i + e];
@@ -784,10 +822,10 @@ pub fn generateTessellationIndexBuffer(
 
             patch[e] = from;
 
-            patch[3 + e * 2 + 0] = @truncate(oppe);
+            patch[3 + e * 2 + 0] = @intCast(@as(u32, @truncate(oppe)));
             patch[3 + e * 2 + 1] = @intCast(oppe >> 32);
 
-            patch[9 + e] = remap[from];
+            patch[9 + e] = @intCast(remap[from]);
         }
 
         destination[i * 4 ..][0..12].* = patch;
@@ -802,15 +840,19 @@ pub fn generateTessellationIndexBuffer(
 /// each new vertex, for the vertex shader to load; the return value is how
 /// many it holds. Rotate each triangle (abc to bca) where the provoking
 /// vertex is the last (OpenGL). Optimize `indices` for the vertex cache
-/// first.
+/// first. With `u16` indices, `vertex_count + indices.len / 3` must be at
+/// most 65536, so every new vertex has a 16-bit index.
 pub fn generateProvokingIndexBuffer(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
+    destination: []Index,
     reorder: []u32,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
+    assert(vertex_count + indices.len / 3 <= @as(u64, std.math.maxInt(Index)) + 1);
 
     var scratch: Scratch = .init(gpa);
     defer scratch.deinit();
@@ -873,7 +915,7 @@ pub fn generateProvokingIndexBuffer(
         reorder_offset += 1;
 
         // The first index is final; the second pass fixes the other two.
-        destination[i + 0] = newidx;
+        destination[i + 0] = @intCast(newidx);
         destination[i + 1] = b;
         destination[i + 2] = c;
 
@@ -899,7 +941,7 @@ pub fn generateProvokingIndexBuffer(
             reorder_offset += 1;
         }
 
-        destination[i] = remap[index];
+        destination[i] = @intCast(remap[index]);
     }
 
     return reorder_offset;
@@ -915,6 +957,7 @@ test "equal vertices share a place" {
     const vertices = [_]u32{ 7, 3, 7, 9, 3 };
     var remap: [5]u32 = undefined;
     const unique = try generateVertexRemap(
+        u32,
         testing.allocator,
         &remap,
         null,

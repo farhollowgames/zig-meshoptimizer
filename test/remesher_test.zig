@@ -64,7 +64,7 @@ fn checkRemesh(
     });
 
     const want_bound = original(null, indices, positions, resolution, options);
-    const got_bound = try mo.remesh(gpa, null, indices, positions, resolution, options);
+    const got_bound = try mo.remesh(u32, gpa, null, indices, positions, resolution, options);
     try common.expectSameValue(usize, "remesh bound", want_bound, got_bound);
 
     // Room for the bound and two more triangles, so the tail shows what is
@@ -80,14 +80,14 @@ fn checkRemesh(
     @memset(want, 0);
     @memset(got, 0);
     const want_count = original(want, indices, positions, resolution, options);
-    const got_count = try mo.remesh(gpa, got, indices, positions, resolution, options);
+    const got_count = try mo.remesh(u32, gpa, got, indices, positions, resolution, options);
     try common.expectSameValue(usize, "remesh count", want_count, got_count);
     try std.testing.expect(want_count <= want_bound);
     try common.expectSame(f32, "remesh triangles", want, got);
 
     // The port again, over a different fill: the same triangles.
     @memset(std.mem.sliceAsBytes(again), 0x55);
-    const again_count = try mo.remesh(gpa, again, indices, positions, resolution, options);
+    const again_count = try mo.remesh(u32, gpa, again, indices, positions, resolution, options);
     try common.expectSameValue(usize, "remesh count, second run", got_count, again_count);
     const written = got_count * 9;
     try common.expectSame(f32, "remesh triangles, second run", got[0..written], again[0..written]);
@@ -104,7 +104,15 @@ fn checkRemesh(
         @memset(got, 0);
         const room = short * 9;
         const short_want = original(want[0..room], indices, positions, resolution, options);
-        const short_got = try mo.remesh(gpa, got[0..room], indices, positions, resolution, options);
+        const short_got = try mo.remesh(
+            u32,
+            gpa,
+            got[0..room],
+            indices,
+            positions,
+            resolution,
+            options,
+        );
         try common.expectSameValue(usize, "remesh count, short", short_want, short_got);
         try common.expectSame(f32, "remesh triangles, short", want, got);
     }

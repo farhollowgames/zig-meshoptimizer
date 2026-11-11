@@ -15,8 +15,10 @@ jobs:
           version: 0.17.0
       - name: Formatting
         run: zig fmt --check build.zig src test bench
-      - name: Oracle, suite and unit tests
+      - name: Oracle, suite and unit tests (ReleaseSafe)
         run: zig build test --summary all
+      - name: The same tests in ReleaseFast, as the benchmark builds the port
+        run: zig build test -Dtest-optimize=ReleaseFast --summary all
 
   neon:
     runs-on: ubuntu-latest

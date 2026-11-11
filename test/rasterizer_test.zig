@@ -87,7 +87,7 @@ fn checkRaster(indices: []const u32, data: []const f32, stride: usize) !void {
         stride * @sizeOf(f32),
     );
     for (0..2) |_| {
-        const got = try mo.analyzeOverdraw(gpa, indices, positions);
+        const got = try mo.analyzeOverdraw(u32, gpa, indices, positions);
         try common.expectSameFields(want, got);
     }
 
@@ -99,7 +99,7 @@ fn checkRaster(indices: []const u32, data: []const f32, stride: usize) !void {
         stride * @sizeOf(f32),
     );
     for (0..2) |_| {
-        const got_coverage = try mo.analyzeCoverage(gpa, indices, positions);
+        const got_coverage = try mo.analyzeCoverage(u32, gpa, indices, positions);
         try common.expectSameFields(want_coverage, got_coverage);
     }
 }

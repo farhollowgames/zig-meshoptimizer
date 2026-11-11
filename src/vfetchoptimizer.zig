@@ -7,6 +7,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 
 const none = std.math.maxInt(u32);
 
@@ -15,10 +16,12 @@ const none = std.math.maxInt(u32);
 /// are used; unused vertices map to `maxInt(u32)`. Apply the table with
 /// `remapVertexBuffer` to each vertex stream and with `remapIndexBuffer`.
 pub fn optimizeVertexFetchRemap(
+    comptime Index: type,
     destination: []u32,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
 ) usize {
+    comptime checkIndex(Index);
     const remap = destination[0..vertex_count];
     @memset(remap, none);
 
@@ -43,12 +46,14 @@ pub fn optimizeVertexFetchRemap(
 /// `vertices` itself. For several vertex streams, use
 /// `optimizeVertexFetchRemap` and remap each stream.
 pub fn optimizeVertexFetch(
+    comptime Index: type,
     gpa: Allocator,
     destination: []u8,
-    indices: []u32,
+    indices: []Index,
     vertices: []const u8,
     vertex_size: usize,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(vertex_size > 0 and vertex_size <= 256);
     assert(vertices.len % vertex_size == 0);
     const vertex_count = vertices.len / vertex_size;
@@ -81,7 +86,7 @@ pub fn optimizeVertexFetch(
             next_vertex += 1;
         }
 
-        index.* = remap.*;
+        index.* = @intCast(remap.*);
     }
 
     return next_vertex;
@@ -98,6 +103,7 @@ test "vertices move to the order of first use" {
     var indices = [_]u32{ 2, 0, 2, 3 };
     var destination: [4]u32 = undefined;
     const unique = try optimizeVertexFetch(
+        u32,
         testing.allocator,
         std.mem.asBytes(&destination),
         &indices,

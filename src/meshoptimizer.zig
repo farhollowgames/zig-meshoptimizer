@@ -4,9 +4,10 @@
 //! A translation of Arseny Kapoulkine's meshoptimizer 1.3. Every function
 //! of the original is here under its name without the `meshopt_` prefix,
 //! and returns the same results for the same inputs, byte for byte. Buffers
-//! are slices; per-vertex floats are `VertexFloats` views; functions that
-//! need scratch memory take a `std.mem.Allocator` first and free all of it
-//! before they return.
+//! are slices; per-vertex floats are `VertexFloats` views. Functions that
+//! read or write index buffers take the index type first, `u16` or `u32`,
+//! as the original's templates do; functions that need scratch memory then
+//! take a `std.mem.Allocator` and free all of it before they return.
 
 const std = @import("std");
 
@@ -173,4 +174,6 @@ pub const clusterlod = @import("clusterlod.zig");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");
+    _ = @import("cosf.zig");
+    _ = @import("log2f.zig");
 }

@@ -16,6 +16,7 @@ const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
 const TriangleAdjacency = @import("vcacheoptimizer.zig").TriangleAdjacency;
+const checkIndex = @import("index.zig").check;
 
 const none = std.math.maxInt(u32);
 const float_max = std.math.floatMax(f32);
@@ -58,8 +59,9 @@ const Cone = struct {
 /// `TriangleAdjacency.init` for indices that use few of many vertices: it
 /// touches only the vertices the indices use.
 fn sparseAdjacency(
+    comptime Index: type,
     scratch: *Scratch,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
 ) Allocator.Error!TriangleAdjacency {
     const face_count = indices.len / 3;
@@ -111,7 +113,7 @@ fn sparseAdjacency(
 }
 
 /// Marks every vertex `indices` use as in no meshlet.
-fn clearUsed(used: []i16, indices: []const u32) void {
+fn clearUsed(comptime Index: type, used: []i16, indices: []const Index) void {
     // For sparse inputs, clearing only the vertices the indices use is
     // faster.
     if (used.len <= indices.len) {
@@ -159,7 +161,12 @@ fn meshletCone(acc: Cone, triangle_count: u32) Cone {
 
 /// Fills each triangle's centroid and normal, and returns the mesh's area,
 /// twice over.
-fn computeTriangleCones(triangles: []Cone, indices: []const u32, positions: VertexFloats) f32 {
+fn computeTriangleCones(
+    comptime Index: type,
+    triangles: []Cone,
+    indices: []const Index,
+    positions: VertexFloats,
+) f32 {
     const vertex_count = positions.count();
 
     var mesh_area: f32 = 0;
@@ -261,15 +268,18 @@ fn appendMeshlet(
 }
 
 /// What the flow of `buildMeshletsFlex` reads.
-const Flow = struct {
-    indices: []const u32,
-    adjacency: TriangleAdjacency,
-    triangles: []const Cone,
-    live_triangles: []const u32,
-};
+fn Flow(comptime Index: type) type {
+    return struct {
+        indices: []const Index,
+        adjacency: TriangleAdjacency,
+        triangles: []const Cone,
+        live_triangles: []const u32,
+    };
+}
 
 fn neighborTriangle(
-    flow: Flow,
+    comptime Index: type,
+    flow: Flow(Index),
     meshlet: Meshlet,
     meshlet_cone: Cone,
     meshlet_vertices: []const u32,
@@ -349,7 +359,7 @@ fn distanceTo(triangles: []const Cone, triangle: u32, corner: [3]f32) f32 {
     return @sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-fn liveCount(flow: Flow, triangle: u32) u32 {
+fn liveCount(comptime Index: type, flow: Flow(Index), triangle: u32) u32 {
     const live = flow.live_triangles;
     const corners = flow.indices[triangle * 3 ..][0..3];
     return live[corners[0]] +% live[corners[1]] +% live[corners[2]];
@@ -358,8 +368,9 @@ fn liveCount(flow: Flow, triangle: u32) u32 {
 /// Writes up to `meshlet_add_seeds` seeds near `meshlet` to `seeds` and
 /// returns how many.
 fn appendSeedTriangles(
+    comptime Index: type,
     seeds: []u32,
-    flow: Flow,
+    flow: Flow(Index),
     meshlet: Meshlet,
     meshlet_vertices: []const u32,
     corner: [3]f32,
@@ -374,7 +385,7 @@ fn appendSeedTriangles(
 
         // The neighbor with the fewest live triangles.
         for (flow.adjacency.neighbors(index)) |triangle| {
-            const live = liveCount(flow, triangle);
+            const live = liveCount(Index, flow, triangle);
 
             if (live < best_neighbor_live) {
                 best_neighbor = triangle;
@@ -427,13 +438,18 @@ fn pruneSeedTriangles(seeds: []u32, emitted_flags: []const bool) usize {
     return result;
 }
 
-fn selectSeedTriangle(seeds: []const u32, flow: Flow, corner: [3]f32) u32 {
+fn selectSeedTriangle(
+    comptime Index: type,
+    seeds: []const u32,
+    flow: Flow(Index),
+    corner: [3]f32,
+) u32 {
     var best_seed: u32 = none;
     var best_live: u32 = none;
     var best_score: f32 = float_max;
 
     for (seeds) |index| {
-        const live = liveCount(flow, index);
+        const live = liveCount(Index, flow, index);
         const score = distanceTo(flow.triangles, index, corner);
 
         if (live < best_live or (live == best_live and score < best_score)) {
@@ -637,11 +653,12 @@ fn kdtreeNearest(
 /// to 1 trades meshlet size for better cone culling; use 0 without cone
 /// culling.
 pub fn buildMeshletsFlex(
+    comptime Index: type,
     gpa: Allocator,
     meshlets: []Meshlet,
     meshlet_vertices: []u32,
     meshlet_triangles: []u8,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     max_vertices: usize,
     min_triangles: usize,
@@ -649,6 +666,7 @@ pub fn buildMeshletsFlex(
     cone_weight: f32,
     split_factor: f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
 
@@ -666,9 +684,9 @@ pub fn buildMeshletsFlex(
     defer scratch.deinit();
 
     const adjacency = if (vertex_count > indices.len and indices.len < (1 << 31))
-        try sparseAdjacency(&scratch, indices, vertex_count)
+        try sparseAdjacency(Index, &scratch, indices, vertex_count)
     else
-        try TriangleAdjacency.init(&scratch, indices, vertex_count);
+        try TriangleAdjacency.init(Index, &scratch, indices, vertex_count);
 
     // Live triangle counts are the adjacency counts: emitting a triangle
     // removes it from the adjacency lists, so they always match.
@@ -681,9 +699,9 @@ pub fn buildMeshletsFlex(
 
     // Each triangle's centroid and normal, for scoring.
     const triangles = try scratch.alloc(Cone, face_count);
-    const mesh_area = computeTriangleCones(triangles, indices, positions);
+    const mesh_area = computeTriangleCones(Index, triangles, indices, positions);
 
-    const flow: Flow = .{
+    const flow: Flow(Index) = .{
         .indices = indices,
         .adjacency = adjacency,
         .triangles = triangles,
@@ -713,7 +731,7 @@ pub fn buildMeshletsFlex(
 
     // Each vertex's index in the current meshlet, -1 if it is not in it.
     const used = try scratch.alloc(i16, vertex_count);
-    clearUsed(used, indices);
+    clearUsed(Index, used, indices);
 
     // The first seed is the triangle closest to the corner.
     var initial_seed: u32 = none;
@@ -755,6 +773,7 @@ pub fn buildMeshletsFlex(
             initial_seed
         else
             neighborTriangle(
+                Index,
                 flow,
                 meshlet,
                 meshlet_cone,
@@ -803,6 +822,7 @@ pub fn buildMeshletsFlex(
             else
                 meshlet_max_seeds - meshlet_add_seeds;
             seed_count += appendSeedTriangles(
+                Index,
                 seeds[seed_count..],
                 flow,
                 meshlet,
@@ -810,7 +830,7 @@ pub fn buildMeshletsFlex(
                 corner,
             );
 
-            const best_seed = selectSeedTriangle(seeds[0..seed_count], flow, corner);
+            const best_seed = selectSeedTriangle(Index, seeds[0..seed_count], flow, corner);
 
             // Seeds come from adjacency, so a disconnected mesh may have
             // none left.
@@ -881,17 +901,19 @@ pub fn buildMeshletsBound(index_count: usize, max_vertices: usize, max_triangles
 /// every vertex the indices use. A `cone_weight` from 0 to 1 trades meshlet
 /// size for better cone culling; use 0 without cone culling.
 pub fn buildMeshlets(
+    comptime Index: type,
     gpa: Allocator,
     meshlets: []Meshlet,
     meshlet_vertices: []u32,
     meshlet_triangles: []u8,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     max_vertices: usize,
     max_triangles: usize,
     cone_weight: f32,
 ) Allocator.Error!usize {
     return buildMeshletsFlex(
+        Index,
         gpa,
         meshlets,
         meshlet_vertices,
@@ -910,15 +932,17 @@ pub fn buildMeshlets(
 /// index buffer order, so optimize the buffer for the vertex cache first.
 /// `indices` refer to `vertex_count` vertices.
 pub fn buildMeshletsScan(
+    comptime Index: type,
     gpa: Allocator,
     meshlets: []Meshlet,
     meshlet_vertices: []u32,
     meshlet_triangles: []u8,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
     max_vertices: usize,
     max_triangles: usize,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
 
     assert(max_vertices >= 3 and max_vertices <= 256);
@@ -929,7 +953,7 @@ pub fn buildMeshletsScan(
 
     // Each vertex's index in the current meshlet, -1 if it is not in it.
     const used = try scratch.alloc(i16, vertex_count);
-    clearUsed(used, indices);
+    clearUsed(Index, used, indices);
 
     const out: Output = .{
         .meshlets = meshlets,
@@ -1107,9 +1131,10 @@ fn radixPass(
 /// Fills each triangle's box and, for each axis `k`, the centroids
 /// `centroids[k * face_count ..]` of the boxes.
 fn bvhPrepare(
+    comptime Index: type,
     boxes: []BvhBox,
     centroids: []f32,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
 ) void {
     const vertex_count = positions.count();
@@ -1140,7 +1165,13 @@ fn bvhPrepare(
 /// The vertices the triangles of `order` use, and in `out`, if given, how
 /// many the first 1, 2, ... of them use. Leaves `used` as it found it,
 /// every entry -1.
-fn bvhCountVertices(order: []const u32, used: []i16, indices: []const u32, out: ?[]u32) usize {
+fn bvhCountVertices(
+    comptime Index: type,
+    order: []const u32,
+    used: []i16,
+    indices: []const Index,
+    out: ?[]u32,
+) usize {
     var used_vertices: usize = 0;
     for (order, 0..) |index, i| {
         const a = indices[index * 3 + 0];
@@ -1172,10 +1203,11 @@ fn bvhPackLeaf(boundary: []u8) void {
 
 /// Cuts `order` into meshlets in order, as many triangles as fit.
 fn bvhPackTail(
+    comptime Index: type,
     boundary: []u8,
     order: []const u32,
     used: []i16,
-    indices: []const u32,
+    indices: []const Index,
     max_vertices: usize,
     max_triangles: usize,
 ) void {
@@ -1184,7 +1216,7 @@ fn bvhPackTail(
     while (i < count) {
         const chunk = if (i + max_triangles <= count) max_triangles else count - i;
 
-        if (bvhCountVertices(order[i..][0..chunk], used, indices, null) <= max_vertices) {
+        if (bvhCountVertices(Index, order[i..][0..chunk], used, indices, null) <= max_vertices) {
             bvhPackLeaf(boundary[i..][0..chunk]);
             i += chunk;
             continue;
@@ -1335,22 +1367,25 @@ const BvhWork = struct {
 };
 
 /// What `bvhSplit` reads at every level.
-const BvhSplit = struct {
-    boxes: []const f32,
-    work: BvhWork,
-    used: []i16,
-    indices: []const u32,
-    max_vertices: usize,
-    min_triangles: usize,
-    max_triangles: usize,
-    fill_weight: f32,
-};
+fn BvhSplit(comptime Index: type) type {
+    return struct {
+        boxes: []const f32,
+        work: BvhWork,
+        used: []i16,
+        indices: []const Index,
+        max_vertices: usize,
+        min_triangles: usize,
+        max_triangles: usize,
+        fill_weight: f32,
+    };
+}
 
 /// Marks in `boundary` where each meshlet of the triangles in `orders`
 /// starts: the triangles in the order of their centroids on each axis.
 fn bvhSplit(
+    comptime Index: type,
     comptime merge: BoxMerge,
-    split: *const BvhSplit,
+    split: *const BvhSplit(Index),
     orders: [3][]u32,
     boundary: []u8,
     depth: u32,
@@ -1361,7 +1396,7 @@ fn bvhSplit(
     const max_triangles = split.max_triangles;
 
     if (count <= max_triangles and
-        bvhCountVertices(orders[0], split.used, split.indices, null) <= max_vertices)
+        bvhCountVertices(Index, orders[0], split.used, split.indices, null) <= max_vertices)
     {
         return bvhPackLeaf(boundary);
     }
@@ -1390,7 +1425,7 @@ fn bvhSplit(
         if (count <= max_triangles) {
             // A vertex bound cluster counts the vertices of every split.
             const list = split.work.words[2 * count ..][0..count];
-            _ = bvhCountVertices(orders[k], split.used, split.indices, list);
+            _ = bvhCountVertices(Index, orders[k], split.used, split.indices, list);
             vertices = list;
         }
 
@@ -1418,6 +1453,7 @@ fn bvhSplit(
     // pathologically unbalanced. The depth limit bounds the recursion.
     if (bestk == null or depth >= meshlet_max_tree_depth) {
         return bvhPackTail(
+            Index,
             boundary,
             orders[0],
             split.used,
@@ -1446,6 +1482,7 @@ fn bvhSplit(
     }
 
     bvhSplit(
+        Index,
         merge,
         split,
         .{ orders[0][0..bestsplit], orders[1][0..bestsplit], orders[2][0..bestsplit] },
@@ -1453,6 +1490,7 @@ fn bvhSplit(
         depth + 1,
     );
     bvhSplit(
+        Index,
         merge,
         split,
         .{ orders[0][bestsplit..], orders[1][bestsplit..], orders[2][bestsplit..] },
@@ -1475,11 +1513,12 @@ fn bvhSplit(
 /// `fill_weight` favors fuller meshlets at some cost to the heuristic's
 /// quality; 0.5 is a safe default.
 pub fn buildMeshletsSpatial(
+    comptime Index: type,
     gpa: Allocator,
     meshlets: []Meshlet,
     meshlet_vertices: []u32,
     meshlet_triangles: []u8,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     max_vertices: usize,
     min_triangles: usize,
@@ -1487,6 +1526,7 @@ pub fn buildMeshletsSpatial(
     fill_weight: f32,
 ) Allocator.Error!usize {
     return buildMeshletsSpatialMerge(
+        Index,
         target_box_merge,
         gpa,
         meshlets,
@@ -1505,18 +1545,20 @@ pub fn buildMeshletsSpatial(
 /// path, which gives the same results as the others unless a position is
 /// NaN.
 pub fn buildMeshletsSpatialMerge(
+    comptime Index: type,
     comptime merge: BoxMerge,
     gpa: Allocator,
     meshlets: []Meshlet,
     meshlet_vertices: []u32,
     meshlet_triangles: []u8,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     max_vertices: usize,
     min_triangles: usize,
     max_triangles: usize,
     fill_weight: f32,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
 
@@ -1540,7 +1582,7 @@ pub fn buildMeshletsSpatialMerge(
     // Boxes and centroids, for sorting; the box after the last pads vector
     // loads.
     const boxes = try scratch.alloc(BvhBox, face_count + 1);
-    bvhPrepare(boxes[0..face_count], work.floats, indices, positions);
+    bvhPrepare(Index, boxes[0..face_count], work.floats, indices, positions);
     boxes[face_count] = .{ .min = @splat(0), .max = @splat(0) };
 
     const axes = try scratch.alloc(u32, face_count * 3);
@@ -1563,11 +1605,11 @@ pub fn buildMeshletsSpatialMerge(
 
     // Each vertex's index in the current meshlet, -1 if it is not in it.
     const used = try scratch.alloc(i16, vertex_count);
-    clearUsed(used, indices);
+    clearUsed(Index, used, indices);
 
     const boundary = try scratch.alloc(u8, face_count);
 
-    const split: BvhSplit = .{
+    const split: BvhSplit(Index) = .{
         .boxes = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(boxes)),
         .work = work,
         .used = used,
@@ -1582,7 +1624,7 @@ pub fn buildMeshletsSpatialMerge(
         axes[face_count..][0..face_count],
         axes[face_count * 2 ..][0..face_count],
     };
-    bvhSplit(merge, &split, orders, boundary, 0);
+    bvhSplit(Index, merge, &split, orders, boundary, 0);
 
     // The meshlets the split asks for; inputs with many vertex bound
     // clusters may ask for more than the bound.

@@ -26,6 +26,7 @@ comptime {
     _ = @import("opacitymap_test.zig");
     _ = @import("allocator_test.zig");
     _ = @import("clusterlod_test.zig");
+    _ = @import("index16_test.zig");
 }
 
 const std = @import("std");

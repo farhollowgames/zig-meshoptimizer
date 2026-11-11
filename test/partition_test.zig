@@ -49,6 +49,7 @@ fn checkOne(
     );
     const port_positions: ?mo.VertexFloats = if (with_positions) positions else null;
     const got_count = try mo.partitionClusters(
+        u32,
         gpa,
         got,
         cluster_indices,
@@ -61,6 +62,7 @@ fn checkOne(
     try common.expectSame(u32, "partition of each cluster", want, got);
 
     const again_count = try mo.partitionClusters(
+        u32,
         gpa,
         again,
         cluster_indices,

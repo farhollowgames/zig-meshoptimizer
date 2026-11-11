@@ -10,6 +10,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const VertexFloats = @import("strided.zig").VertexFloats;
+const convert = @import("convert.zig");
+const checkIndex = @import("index.zig").check;
 const quantizeSnorm = @import("quantization.zig").quantizeSnorm;
 
 // At most 256, as meshlet indices are bytes.
@@ -198,7 +200,12 @@ fn computeBoundingSphere(
 
 /// The bounds of the triangles of `indices`, whose distinct vertices are
 /// `corners`.
-fn clusterBounds(indices: []const u32, corners: []const u32, positions: VertexFloats) Bounds {
+fn clusterBounds(
+    comptime Index: type,
+    indices: []const Index,
+    corners: []const u32,
+    positions: VertexFloats,
+) Bounds {
     // Triangle normals, each with the plane equation's distance last.
     var normals: [meshlet_max_triangles][4]f32 = undefined;
     var triangles: usize = 0;
@@ -290,8 +297,9 @@ fn clusterBounds(indices: []const u32, corners: []const u32, positions: VertexFl
         const dc = center[0] * n[0] + center[1] * n[1] + center[2] * n[2] + n[3];
         const dn = axis[0] * n[0] + axis[1] * n[1] + axis[2] * n[2];
 
-        // At least mindp, which passed the cutoff above.
-        assert(dn > 0);
+        // At least mindp, which passed the cutoff above, unless the normals
+        // are NaN, from positions that are not finite or whose products
+        // overflow.
         const t = dc / dn;
 
         maxt = if (t > maxt) t else maxt;
@@ -321,9 +329,9 @@ fn clusterBounds(indices: []const u32, corners: []const u32, positions: VertexFl
 
     // Rounded up, not to nearest, hence the + 1.
     const cutoff_sum = bounds.cone_cutoff + errors[0] + errors[1] + errors[2];
-    const cone_cutoff_s8: i32 = @intFromFloat(127 * cutoff_sum + 1);
+    const cone_cutoff_s8 = convert.truncate(127 * cutoff_sum + 1);
 
-    bounds.cone_cutoff_s8 = if (cone_cutoff_s8 > 127) 127 else @intCast(cone_cutoff_s8);
+    bounds.cone_cutoff_s8 = if (cone_cutoff_s8 > 127) 127 else @truncate(cone_cutoff_s8);
 
     return bounds;
 }
@@ -333,7 +341,12 @@ fn clusterBounds(indices: []const u32, corners: []const u32, positions: VertexFl
 /// (the whole mesh's). A cluster without visible triangles gets all zeros;
 /// one whose normal cone is wider than about 168 degrees gets its sphere and
 /// a cutoff of 1, which no view passes.
-pub fn computeClusterBounds(indices: []const u32, positions: VertexFloats) Bounds {
+pub fn computeClusterBounds(
+    comptime Index: type,
+    indices: []const Index,
+    positions: VertexFloats,
+) Bounds {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(indices.len / 3 <= meshlet_max_triangles);
     assert(positions.stride >= 3 and positions.stride <= 64);
@@ -357,7 +370,7 @@ pub fn computeClusterBounds(indices: []const u32, positions: VertexFloats) Bound
         c.* = v;
     }
 
-    return clusterBounds(indices, corners[0..corner_count], positions);
+    return clusterBounds(Index, indices, corners[0..corner_count], positions);
 }
 
 /// `computeClusterBounds` for a meshlet: `meshlet_vertices` are its
@@ -387,6 +400,7 @@ pub fn computeMeshletBounds(
     }
 
     return clusterBounds(
+        u32,
         indices[0..meshlet_triangles.len],
         meshlet_vertices[0..corner_count],
         positions,

@@ -22,6 +22,13 @@ pub fn build(b: *std.Build) void {
         "test-filter",
         "Skip tests that do not match any filter",
     ) orelse &.{};
+    const fuzz_seed = b.option(
+        u64,
+        "fuzz-seed",
+        "Added to every fuzz test's first seed, for new cases (default 0)",
+    ) orelse 0;
+    const test_options = b.addOptions();
+    test_options.addOption(u64, "fuzz_seed", fuzz_seed);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/meshoptimizer.zig"),
@@ -58,6 +65,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "meshoptimizer", .module = test_mod },
                 .{ .name = "upstream", .module = upstream_mod },
                 .{ .name = "meshes", .module = meshes_mod },
+                .{ .name = "test_options", .module = test_options.createModule() },
             },
         }),
         .filters = test_filters,

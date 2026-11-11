@@ -34,7 +34,8 @@ Every function of the original is there under its name without the
 `meshopt_` prefix. Buffers are slices, and per-vertex floats inside a vertex
 buffer are `VertexFloats` views. A function that needs scratch memory takes
 a `std.mem.Allocator` first and frees everything before it returns, newest
-first, so stack allocators work:
+first, so stack allocators work (except `clusterlod.build`, which needs a
+general-purpose allocator):
 
 ```zig
 const std = @import("std");

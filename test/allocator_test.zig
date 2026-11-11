@@ -166,6 +166,7 @@ fn checkVertexFetch(mesh: Mesh, in_place: bool, blocks: Blocks) !void {
         defer port.end();
         const source: []const Vertex = if (in_place) got_vertices else mesh.vertices;
         break :got try mo.optimizeVertexFetch(
+            u32,
             scratch,
             std.mem.sliceAsBytes(got_vertices),
             got_indices,
@@ -200,7 +201,7 @@ fn checkVertexCache(mesh: Mesh, in_place: bool, blocks: Blocks) !void {
         const scratch = try port.begin(blocks);
         defer port.end();
         const source: []const u32 = if (in_place) got else mesh.indices;
-        try mo.optimizeVertexCache(scratch, got, source, mesh.vertices.len);
+        try mo.optimizeVertexCache(u32, scratch, got, source, mesh.vertices.len);
     }
 
     try port.expectSameCalls();
@@ -233,7 +234,7 @@ fn checkOverdraw(mesh: Mesh, blocks: Blocks) !void {
         const scratch = try port.begin(blocks);
         defer port.end();
         const positions = common.positionsOf(mesh.vertices);
-        try mo.optimizeOverdraw(scratch, got, indices, positions, threshold);
+        try mo.optimizeOverdraw(u32, scratch, got, indices, positions, threshold);
     }
 
     try port.expectSameCalls();
@@ -270,6 +271,7 @@ fn checkSimplify(mesh: Mesh, options: mo.SimplifyOptions, target: usize, blocks:
         const scratch = try port.begin(blocks);
         defer port.end();
         break :got try mo.simplify(
+            u32,
             scratch,
             got,
             mesh.indices,
@@ -389,4 +391,144 @@ test "a cache too large for memory fails alike, its size clamped on overflow" {
         try std.testing.expectError(error.OutOfMemory, result);
         try common.expectSame(Event, "allocator calls", original_record.slice(), record.slice());
     }
+}
+
+/// Runs the allocating functions the other tests do not run through a cache
+/// on `mesh`, through `a`, and after each `check.empty()`, which fails
+/// unless `a` has nothing live.
+fn libraryCalls(mesh: Mesh, a: std.mem.Allocator, check: anytype) !void {
+    const positions = common.positionsOf(mesh.vertices);
+    const floats = common.floatsOf(mesh.vertices);
+    const n = mesh.indices.len;
+    const vertex_count = mesh.vertices.len;
+
+    const out = try gpa.alloc(u32, n * 2);
+    defer gpa.free(out);
+    const reorder = try gpa.alloc(u32, n);
+    defer gpa.free(reorder);
+    const per_vertex = try gpa.alloc(u32, vertex_count);
+    defer gpa.free(per_vertex);
+    const normals = try gpa.alloc(f32, n * 3);
+    defer gpa.free(normals);
+    const tangents = try gpa.alloc(f32, n * 4);
+    defer gpa.free(tangents);
+    const stream: mo.Stream = .{
+        .data = std.mem.sliceAsBytes(mesh.vertices),
+        .size = 12,
+        .stride = @sizeOf(Vertex),
+    };
+
+    try mo.spatialSortTriangles(u32, a, out[0..n], mesh.indices, positions);
+    try check.empty();
+    try mo.spatialClusterPoints(a, per_vertex, positions, 64);
+    try check.empty();
+    try mo.generatePositionRemap(a, per_vertex, positions);
+    try check.empty();
+    _ = try mo.filterIndexBuffer(u32, a, out[0..n], mesh.indices, vertex_count, stream);
+    try check.empty();
+    try mo.generateShadowIndexBuffer(u32, a, out[0..n], mesh.indices, vertex_count, stream);
+    try check.empty();
+    try mo.generateAdjacencyIndexBuffer(u32, a, out[0 .. n * 2], mesh.indices, positions);
+    try check.empty();
+    _ = try mo.generateProvokingIndexBuffer(u32, a, out[0..n], reorder, mesh.indices, vertex_count);
+    try check.empty();
+    _ = try mo.stripify(u32, a, out, mesh.indices, vertex_count, 0);
+    try check.empty();
+    try mo.optimizeVertexCacheStrip(u32, a, out[0..n], mesh.indices, vertex_count);
+    try check.empty();
+    _ = try mo.analyzeOverdraw(u32, a, mesh.indices, positions);
+    try check.empty();
+    _ = try mo.analyzeCoverage(u32, a, mesh.indices, positions);
+    try check.empty();
+    try mo.generateNormals(u32, a, normals, mesh.indices, positions, 1.0, 1.0);
+    try check.empty();
+    const normal_view: mo.VertexFloats = .init(floats[3..], common.vertex_floats);
+    const uv_view: mo.VertexFloats = .init(floats[6..], common.vertex_floats);
+    try mo.generateTangents(u32, a, tangents, mesh.indices, positions, normal_view, uv_view, .{});
+    try check.empty();
+
+    const bound = mo.buildMeshletsBound(n, 64, 124);
+    const meshlets = try gpa.alloc(mo.Meshlet, bound);
+    defer gpa.free(meshlets);
+    const meshlet_vertices = try gpa.alloc(u32, n);
+    defer gpa.free(meshlet_vertices);
+    const meshlet_triangles = try gpa.alloc(u8, n);
+    defer gpa.free(meshlet_triangles);
+    _ = try mo.buildMeshlets(
+        u32,
+        a,
+        meshlets,
+        meshlet_vertices,
+        meshlet_triangles,
+        mesh.indices,
+        positions,
+        64,
+        124,
+        0.25,
+    );
+    try check.empty();
+    _ = try mo.buildMeshletsSpatial(
+        u32,
+        a,
+        meshlets,
+        meshlet_vertices,
+        meshlet_triangles,
+        mesh.indices,
+        positions,
+        64,
+        32,
+        124,
+        0.5,
+    );
+    try check.empty();
+
+    const attributes: mo.VertexFloats = .init(floats[3..], common.vertex_floats);
+    const weights = [_]f32{ 0.5, 0.5, 0.5, 1, 1 };
+    const target = n / 4;
+    _ = try mo.simplifyWithAttributes(
+        u32,
+        a,
+        out[0..n],
+        mesh.indices,
+        positions,
+        attributes,
+        &weights,
+        null,
+        target,
+        1e-2,
+        .{},
+        null,
+    );
+    try check.empty();
+    _ = try mo.simplifySloppy(u32, a, out[0..n], mesh.indices, positions, null, target, 1e-2, null);
+    try check.empty();
+    _ = try mo.simplifyPrune(u32, a, out[0..n], mesh.indices, positions, 1e-2);
+    try check.empty();
+    _ = try mo.simplifyPoints(a, per_vertex, positions, null, 1, vertex_count / 4);
+    try check.empty();
+
+    const remesh_bound = try mo.remesh(u32, a, null, mesh.indices, positions, 32, .{});
+    try check.empty();
+    const triangles = try gpa.alloc(f32, remesh_bound * 9);
+    defer gpa.free(triangles);
+    _ = try mo.remesh(u32, a, triangles, mesh.indices, positions, 32, .{});
+    try check.empty();
+}
+
+test "the library's functions free newest first, as cache handles need" {
+    var mesh = try common.pirate();
+    defer mesh.deinit(gpa);
+
+    // A handle asserts that each free is of the newest allocation in its
+    // block, and gives the block back once all of it is free.
+    var cache: mo.AllocatorCache = try .init(std.heap.page_allocator, 1, 64 << 20);
+    defer cache.deinit();
+    var local: mo.AllocatorCache.Local = .init(&cache);
+    const Handle = struct {
+        local: *mo.AllocatorCache.Local,
+        fn empty(self: @This()) !void {
+            try std.testing.expectEqual(null, self.local.block);
+        }
+    };
+    try libraryCalls(mesh, local.allocator(), Handle{ .local = &local });
 }

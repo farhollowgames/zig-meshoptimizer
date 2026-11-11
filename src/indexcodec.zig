@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const checkIndex = @import("index.zig").check;
 
 const index_header: u8 = 0xe0;
 const sequence_header: u8 = 0xd0;
@@ -176,20 +177,18 @@ fn writeTriangle(comptime T: type, destination: []T, triangle: usize, a: u32, b:
     destination[triangle * 3 ..][0..3].* = .{ @truncate(a), @truncate(b), @truncate(c) };
 }
 
-fn checkIndexType(comptime T: type) void {
-    if (T != u16 and T != u32) @compileError("indices decode to u16 or u32, not " ++ @typeName(T));
-}
-
 /// Encodes the triangle list `indices` into `buffer` and returns the
 /// encoded size, usually under 1.5 bytes per triangle, and under 1 byte
 /// once compressed. Optimize the index buffer for the vertex cache and for
 /// vertex fetch first, for the smallest result. `buffer` needs at most
 /// `encodeIndexBufferBound` bytes; with fewer, the encoding may not fit.
 pub fn encodeIndexBuffer(
+    comptime Index: type,
     buffer: []u8,
-    indices: []const u32,
+    indices: []const Index,
     version: IndexVersion,
 ) error{NoSpaceLeft}!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     const triangle_count = indices.len / 3;
 
@@ -437,7 +436,7 @@ pub fn decodeIndexVersion(buffer: []const u8) ?IndexVersion {
 /// `destination.len` indices of type `T` (`u16` or `u32`); on an error,
 /// `destination` holds what was decoded before it.
 pub fn decodeIndexBuffer(comptime T: type, destination: []T, buffer: []const u8) DecodeError!void {
-    comptime checkIndexType(T);
+    comptime checkIndex(T);
     assert(destination.len % 3 == 0);
     const triangle_count = destination.len / 3;
 
@@ -628,10 +627,12 @@ pub fn decodeIndexBuffer(comptime T: type, destination: []T, buffer: []const u8)
 /// does better. `buffer` needs at most `encodeIndexSequenceBound` bytes;
 /// with fewer, the encoding may not fit.
 pub fn encodeIndexSequence(
+    comptime Index: type,
     buffer: []u8,
-    indices: []const u32,
+    indices: []const Index,
     version: IndexVersion,
 ) error{NoSpaceLeft}!usize {
+    comptime checkIndex(Index);
     // The smallest valid encoding: the header, 1 byte per index and a 4-byte
     // tail.
     if (buffer.len < 1 + indices.len + 4) return error.NoSpaceLeft;
@@ -700,7 +701,7 @@ pub fn decodeIndexSequence(
     destination: []T,
     buffer: []const u8,
 ) DecodeError!void {
-    comptime checkIndexType(T);
+    comptime checkIndex(T);
 
     // The smallest valid encoding: the header, 1 byte per index and a 4-byte
     // tail.
@@ -746,7 +747,7 @@ test "a triangle list round-trips in either version" {
     const indices = [_]u32{ 0, 1, 2, 2, 1, 3, 4, 5, 6, 0, 1, 2, 7, 8, 9, 300, 2, 70000 };
     var buffer: [encodeIndexBufferBound(indices.len, 70001)]u8 = undefined;
     for ([_]IndexVersion{ .v0, .v1 }) |version| {
-        const size = try encodeIndexBuffer(&buffer, &indices, version);
+        const size = try encodeIndexBuffer(u32, &buffer, &indices, version);
         try testing.expectEqual(version, decodeIndexVersion(buffer[0..size]));
         var decoded: [indices.len]u32 = undefined;
         try decodeIndexBuffer(u32, &decoded, buffer[0..size]);
@@ -758,7 +759,7 @@ test "an index sequence round-trips" {
     // Differences take 30 bits at most, with the sign and the baseline bit.
     const indices = [_]u32{ 0, 1, 51, 2, 49, 1000, 0x3fff_ffff, 7 };
     var buffer: [encodeIndexSequenceBound(indices.len, 0x4000_0000)]u8 = undefined;
-    const size = try encodeIndexSequence(&buffer, &indices, .default);
+    const size = try encodeIndexSequence(u32, &buffer, &indices, .default);
     var decoded: [indices.len]u32 = undefined;
     try decodeIndexSequence(u32, &decoded, buffer[0..size]);
     try testing.expectEqualSlices(u32, &indices, &decoded);

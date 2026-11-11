@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
+const test_options = @import("test_options");
 
 pub const Vertex = meshes.Vertex;
 pub const Mesh = meshes.Mesh;
@@ -117,6 +118,33 @@ pub fn expectSame(comptime T: type, what: []const u8, want: []const T, got: []co
     }
 }
 
+/// `expectSame` for floats, except that a NaN matches any NaN. Non-finite
+/// or overflowing inputs make NaNs, and when an operation's operands hold
+/// several, LLVM leaves open which one it returns, so a NaN's sign and
+/// payload follow how each compiler ordered the operands, on both sides.
+pub fn expectSameAnyNan(what: []const u8, want: []const f32, got: []const f32) !void {
+    if (want.len != got.len) return expectSame(f32, what, want, got);
+    for (want, got, 0..) |w, g, i| {
+        if (std.math.isNan(w) and std.math.isNan(g)) continue;
+        if (@as(u32, @bitCast(w)) != @as(u32, @bitCast(g))) {
+            std.debug.print(
+                "{s}: item {d} differs: original {any}, port {any}\n",
+                .{ what, i, w, g },
+            );
+            return error.Mismatch;
+        }
+    }
+}
+
+/// Fails unless the bounds are the same, floats as `expectSameAnyNan`
+/// compares them.
+pub fn expectSameBoundsAnyNan(what: []const u8, want: c.Bounds, got: mo.Bounds) !void {
+    const want_floats: [11]f32 = @bitCast(std.mem.asBytes(&want)[0..44].*);
+    const got_floats: [11]f32 = @bitCast(std.mem.asBytes(&got)[0..44].*);
+    try expectSameAnyNan(what, &want_floats, &got_floats);
+    try expectSame(u8, what, std.mem.asBytes(&want)[44..], std.mem.asBytes(&got)[44..]);
+}
+
 /// `expectSame` for one value.
 pub fn expectSameValue(comptime T: type, what: []const u8, want: T, got: T) !void {
     return expectSame(T, what, &.{want}, &.{got});
@@ -177,9 +205,10 @@ pub const special_points = [_]f32{
 /// How many cases every fuzz test runs.
 pub const fuzz_cases = 1000;
 
-/// Runs `check(seed)` on `fuzz_cases` seeds from `first_seed`, each case
-/// building its inputs from its own seed, and prints the seed of the case
-/// that fails, by an error or, outside Windows, by a failed safety check.
+/// Runs `check(seed)` on `fuzz_cases` seeds from `first_seed` plus the
+/// build's `-Dfuzz-seed`, each case building its inputs from its own seed,
+/// and prints the seed of the case that fails, by an error or, outside
+/// Windows, by a failed safety check.
 pub fn fuzz(name: []const u8, first_seed: u64, check: anytype) !void {
     const report_crashes = builtin.os.tag != .windows;
     var previous: std.posix.Sigaction = undefined;
@@ -194,7 +223,7 @@ pub fn fuzz(name: []const u8, first_seed: u64, check: anytype) !void {
     defer if (report_crashes) std.posix.sigaction(.ABRT, &previous, null);
 
     for (0..fuzz_cases) |i| {
-        const seed = first_seed + i;
+        const seed = first_seed +% test_options.fuzz_seed +% i;
         running = .{ .name = name, .seed = seed };
         check(seed) catch |err| {
             std.debug.print("{s}: failed at seed {d}\n", .{ name, seed });

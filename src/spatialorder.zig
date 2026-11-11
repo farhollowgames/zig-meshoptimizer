@@ -9,6 +9,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
+const checkIndex = @import("index.zig").check;
 const convert = @import("convert.zig");
 const truncate = convert.truncate;
 
@@ -365,11 +366,13 @@ pub fn spatialSortRemap(
 /// curve by their centroids, for spatial locality; optimize the result for
 /// the vertex cache after. `destination` may be `indices` itself.
 pub fn spatialSortTriangles(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     positions: VertexFloats,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     const vertex_count = positions.count();
@@ -402,7 +405,7 @@ pub fn spatialSortTriangles(
 
     var source = indices;
     if (destination.ptr == indices.ptr) {
-        const copy = try scratch.alloc(u32, indices.len);
+        const copy = try scratch.alloc(Index, indices.len);
         @memcpy(copy, indices);
         source = copy;
     }

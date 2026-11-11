@@ -9,6 +9,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 const VertexFloats = @import("strided.zig").VertexFloats;
 const truncate = @import("convert.zig").truncate;
 
@@ -175,7 +176,12 @@ fn rasterize(
 /// Writes the corners of every triangle of `indices` to `triangles`, three
 /// floats each, scaled so the mesh's largest extent spans the viewport, and
 /// returns that extent.
-fn transformTriangles(triangles: []f32, indices: []const u32, positions: VertexFloats) f32 {
+fn transformTriangles(
+    comptime Index: type,
+    triangles: []f32,
+    indices: []const Index,
+    positions: VertexFloats,
+) f32 {
     const vertex_count = positions.count();
 
     var minv: [3]f32 = @splat(std.math.floatMax(f32));
@@ -280,10 +286,12 @@ pub const OverdrawStatistics = struct {
 /// rasterizer that draws the mesh along each axis, front and back faces
 /// apart. Real GPUs may differ.
 pub fn analyzeOverdraw(
+    comptime Index: type,
     gpa: Allocator,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
 ) Allocator.Error!OverdrawStatistics {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
 
@@ -293,7 +301,7 @@ pub fn analyzeOverdraw(
     var result: OverdrawStatistics = .{};
 
     const triangles = try scratch.alloc(f32, indices.len * 3);
-    _ = transformTriangles(triangles, indices, positions);
+    _ = transformTriangles(Index, triangles, indices, positions);
 
     const buffer = &(try scratch.alloc(OverdrawBuffer, 1))[0];
 
@@ -326,10 +334,12 @@ pub const CoverageStatistics = struct {
 /// Measures how much of the viewport the mesh covers seen along each axis,
 /// with the software rasterizer of `analyzeOverdraw`.
 pub fn analyzeCoverage(
+    comptime Index: type,
     gpa: Allocator,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
 ) Allocator.Error!CoverageStatistics {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
 
@@ -339,7 +349,7 @@ pub fn analyzeCoverage(
     var result: CoverageStatistics = .{};
 
     const triangles = try scratch.alloc(f32, indices.len * 3);
-    const extent = transformTriangles(triangles, indices, positions);
+    const extent = transformTriangles(Index, triangles, indices, positions);
 
     const buffer = &(try scratch.alloc(OverdrawBuffer, 1))[0];
 
@@ -367,7 +377,7 @@ test "a square seen face on covers the viewport" {
     // out on z so the mesh is a cube's extent.
     const positions = [_]f32{ 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 };
     const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
-    const stats = try analyzeCoverage(testing.allocator, &indices, .init(&positions, 3));
+    const stats = try analyzeCoverage(u32, testing.allocator, &indices, .init(&positions, 3));
     try testing.expectEqual(1.0, stats.coverage[2]);
     try testing.expectEqual(1.0, stats.extent);
 }

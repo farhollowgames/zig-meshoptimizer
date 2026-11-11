@@ -57,17 +57,17 @@ fn checkVertexRemap(vertices: []const Vertex, indices: ?[]const u32) !void {
                 1,
             );
         const got_unique = if (size == @sizeOf(Vertex))
-            try mo.generateVertexRemap(gpa, got, indices, bytes, size)
+            try mo.generateVertexRemap(u32, gpa, got, indices, bytes, size)
         else
-            try mo.generateVertexRemapMulti(gpa, got, indices, vertices.len, &.{position});
+            try mo.generateVertexRemapMulti(u32, gpa, got, indices, vertices.len, &.{position});
         try common.expectSameValue(usize, "unique vertices", want_unique, got_unique);
         // Vertices no index uses keep the original's marker.
         try common.expectSame(u32, "remap", want, got);
         @memset(got, 0x55555555);
         _ = if (size == @sizeOf(Vertex))
-            try mo.generateVertexRemap(gpa, got, indices, bytes, size)
+            try mo.generateVertexRemap(u32, gpa, got, indices, bytes, size)
         else
-            try mo.generateVertexRemapMulti(gpa, got, indices, vertices.len, &.{position});
+            try mo.generateVertexRemapMulti(u32, gpa, got, indices, vertices.len, &.{position});
         try common.expectSame(u32, "remap again", want, got);
 
         // Applying the table, into a new buffer and in place.
@@ -93,7 +93,14 @@ fn checkVertexRemap(vertices: []const Vertex, indices: ?[]const u32) !void {
         &c_streams,
         c_streams.len,
     );
-    const got_multi = try mo.generateVertexRemapMulti(gpa, got, indices, vertices.len, &streams);
+    const got_multi = try mo.generateVertexRemapMulti(
+        u32,
+        gpa,
+        got,
+        indices,
+        vertices.len,
+        &streams,
+    );
     try common.expectSameValue(usize, "unique vertices (streams)", want_multi, got_multi);
     try common.expectSame(u32, "remap (streams)", want, got);
 
@@ -188,7 +195,7 @@ fn checkRemapApply(
         index_count,
         remap.ptr,
     );
-    mo.remapIndexBuffer(got_indices, indices, remap);
+    mo.remapIndexBuffer(u32, got_indices, indices, remap);
     try common.expectSame(u32, "remapIndexBuffer", want_indices, got_indices);
 
     // Without indices the table itself is read, and may be overwritten as
@@ -207,7 +214,7 @@ fn checkRemapApply(
             const dst = shift[0];
             const src = shift[1];
             c.meshopt_remapIndexBuffer(want_table[dst..].ptr, null, n, want_table[src..].ptr);
-            mo.remapIndexBuffer(got_table[dst..][0..n], null, got_table[src..][0..n]);
+            mo.remapIndexBuffer(u32, got_table[dst..][0..n], null, got_table[src..][0..n]);
             try common.expectSame(u32, "remapIndexBuffer overlapping", want_table, got_table);
         }
     }
@@ -246,6 +253,7 @@ fn checkFilterAndShadow(mesh: common.Mesh) !void {
             @sizeOf(Vertex),
         );
         const got_count = try mo.filterIndexBuffer(
+            u32,
             gpa,
             got,
             indices,
@@ -263,6 +271,7 @@ fn checkFilterAndShadow(mesh: common.Mesh) !void {
             1,
         );
         const got_multi = try mo.filterIndexBufferMulti(
+            u32,
             gpa,
             got,
             indices,
@@ -288,7 +297,14 @@ fn checkFilterAndShadow(mesh: common.Mesh) !void {
             size,
             @sizeOf(Vertex),
         );
-        const got_in_place = try mo.filterIndexBuffer(gpa, got, got, mesh.vertices.len, stream);
+        const got_in_place = try mo.filterIndexBuffer(
+            u32,
+            gpa,
+            got,
+            got,
+            mesh.vertices.len,
+            stream,
+        );
         try common.expectSame(
             u32,
             "filterIndexBuffer in place",
@@ -305,10 +321,10 @@ fn checkFilterAndShadow(mesh: common.Mesh) !void {
             size,
             @sizeOf(Vertex),
         );
-        try mo.generateShadowIndexBuffer(gpa, got, indices, mesh.vertices.len, stream);
+        try mo.generateShadowIndexBuffer(u32, gpa, got, indices, mesh.vertices.len, stream);
         try common.expectSame(u32, "generateShadowIndexBuffer", want, got);
         @memset(got, 0x55555555);
-        try mo.generateShadowIndexBuffer(gpa, got, indices, mesh.vertices.len, stream);
+        try mo.generateShadowIndexBuffer(u32, gpa, got, indices, mesh.vertices.len, stream);
         try common.expectSame(u32, "generateShadowIndexBuffer again", want, got);
 
         c.meshopt_generateShadowIndexBufferMulti(
@@ -319,7 +335,14 @@ fn checkFilterAndShadow(mesh: common.Mesh) !void {
             &.{c_stream},
             1,
         );
-        try mo.generateShadowIndexBufferMulti(gpa, got, indices, mesh.vertices.len, &.{stream});
+        try mo.generateShadowIndexBufferMulti(
+            u32,
+            gpa,
+            got,
+            indices,
+            mesh.vertices.len,
+            &.{stream},
+        );
         try common.expectSame(u32, "generateShadowIndexBufferMulti", want, got);
     }
 }
@@ -359,7 +382,7 @@ fn checkPositionRemapAndPatches(mesh: common.Mesh) !void {
         n,
         @sizeOf(Vertex),
     );
-    try mo.generateAdjacencyIndexBuffer(gpa, got, indices, positions);
+    try mo.generateAdjacencyIndexBuffer(u32, gpa, got, indices, positions);
     try common.expectSame(
         u32,
         "generateAdjacencyIndexBuffer",
@@ -375,7 +398,7 @@ fn checkPositionRemapAndPatches(mesh: common.Mesh) !void {
         n,
         @sizeOf(Vertex),
     );
-    try mo.generateTessellationIndexBuffer(gpa, got, indices, positions);
+    try mo.generateTessellationIndexBuffer(u32, gpa, got, indices, positions);
     try common.expectSame(u32, "generateTessellationIndexBuffer", want, got);
 }
 
@@ -406,7 +429,7 @@ fn checkProvoking(mesh: common.Mesh) !void {
         indices.len,
         n,
     );
-    const got_count = try mo.generateProvokingIndexBuffer(gpa, got, got_reorder, indices, n);
+    const got_count = try mo.generateProvokingIndexBuffer(u32, gpa, got, got_reorder, indices, n);
     try common.expectSame(u32, "provoking indices", want, got);
     try common.expectSame(
         u32,
@@ -418,7 +441,7 @@ fn checkProvoking(mesh: common.Mesh) !void {
     // Again, into buffers holding other values.
     @memset(got, 0x55555555);
     @memset(got_reorder, 0x55555555);
-    const again = try mo.generateProvokingIndexBuffer(gpa, got, got_reorder, indices, n);
+    const again = try mo.generateProvokingIndexBuffer(u32, gpa, got, got_reorder, indices, n);
     try common.expectSame(u32, "provoking indices again", want, got);
     try common.expectSame(
         u32,
@@ -509,6 +532,7 @@ fn fuzzStreams(seed: u64) !void {
             stream_count,
         );
         const got_unique = try mo.generateVertexRemapMulti(
+            u32,
             gpa,
             got[0..vertex_count],
             list,
@@ -528,6 +552,7 @@ fn fuzzStreams(seed: u64) !void {
             stride,
         );
         const got_single = try mo.generateVertexRemap(
+            u32,
             gpa,
             got[0..vertex_count],
             list,
@@ -548,6 +573,7 @@ fn fuzzStreams(seed: u64) !void {
         stream_count,
     );
     const got_filtered = try mo.filterIndexBufferMulti(
+        u32,
         gpa,
         got[0..indices.len],
         indices,
@@ -570,6 +596,7 @@ fn fuzzStreams(seed: u64) !void {
         stream_count,
     );
     try mo.generateShadowIndexBufferMulti(
+        u32,
         gpa,
         got[0..indices.len],
         indices,
@@ -620,6 +647,17 @@ fn checkRemapBytes(
         index_count,
         remap.ptr,
     );
-    mo.remapIndexBuffer(got_indices, indices, remap);
+    mo.remapIndexBuffer(u32, got_indices, indices, remap);
     try common.expectSame(u32, "remapIndexBuffer", want_indices, got_indices);
+}
+
+test "remapIndexBuffer reads an overlapping table as the original does" {
+    // The destination one past the table: each read sees the value just
+    // written, so the original reads only the first entry, and the unused
+    // entry past it never counts as a read.
+    var want = [_]u32{ 0, 0xffffffff, 5, 9 };
+    var got = want;
+    c.meshopt_remapIndexBuffer(want[1..].ptr, null, 3, &want);
+    mo.remapIndexBuffer(u32, got[1..4], null, got[0..3]);
+    try common.expectSame(u32, "remapIndexBuffer shifted", &want, &got);
 }

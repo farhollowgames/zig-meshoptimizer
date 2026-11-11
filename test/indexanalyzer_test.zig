@@ -91,6 +91,7 @@ fn checkCache(indices: []const u32, vertex_count: usize, model: [3]u32) !void {
     );
     for (0..2) |_| {
         const got = try mo.analyzeVertexCache(
+            u32,
             gpa,
             indices,
             vertex_count,
@@ -105,7 +106,7 @@ fn checkCache(indices: []const u32, vertex_count: usize, model: [3]u32) !void {
 fn checkFetch(indices: []const u32, vertex_count: usize, vertex_size: usize) !void {
     const want = c.meshopt_analyzeVertexFetch(indices.ptr, indices.len, vertex_count, vertex_size);
     for (0..2) |_| {
-        const got = try mo.analyzeVertexFetch(gpa, indices, vertex_count, vertex_size);
+        const got = try mo.analyzeVertexFetch(u32, gpa, indices, vertex_count, vertex_size);
         try common.expectSameFields(want, got);
     }
 }
@@ -113,10 +114,10 @@ fn checkFetch(indices: []const u32, vertex_count: usize, vertex_size: usize) !vo
 test "the analyzers match the original on empty and unused input" {
     for ([_]usize{ 0, 1, 5 }) |vertex_count| {
         const want = c.meshopt_analyzeVertexCache(null, 0, vertex_count, 16, 0, 0);
-        const got = try mo.analyzeVertexCache(gpa, &.{}, vertex_count, 16, 0, 0);
+        const got = try mo.analyzeVertexCache(u32, gpa, &.{}, vertex_count, 16, 0, 0);
         try common.expectSameFields(want, got);
         const want_fetch = c.meshopt_analyzeVertexFetch(null, 0, vertex_count, 16);
-        const got_fetch = try mo.analyzeVertexFetch(gpa, &.{}, vertex_count, 16);
+        const got_fetch = try mo.analyzeVertexFetch(u32, gpa, &.{}, vertex_count, 16);
         try common.expectSameFields(want_fetch, got_fetch);
     }
 }

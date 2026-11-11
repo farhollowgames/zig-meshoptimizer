@@ -847,3 +847,383 @@ pub extern fn clodBuildHierarchy(
     node_width: usize,
     level_count: usize,
 ) usize;
+
+// meshoptimizer.h's C++ templates instantiated for 16-bit indices
+// (test/reference.cpp), named reference16_ and the function's name;
+// simplifySloppyLocks is the overload with vertex locks.
+
+pub extern fn reference16_generateVertexRemap(
+    destination: ?[*]u32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+) usize;
+pub extern fn reference16_generateVertexRemapMulti(
+    destination: ?[*]u32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    streams: ?[*]const Stream,
+    stream_count: usize,
+) usize;
+pub extern fn reference16_remapIndexBuffer(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    remap: ?[*]const u32,
+) void;
+pub extern fn reference16_filterIndexBuffer(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+    vertex_stride: usize,
+) usize;
+pub extern fn reference16_filterIndexBufferMulti(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    streams: ?[*]const Stream,
+    stream_count: usize,
+) usize;
+pub extern fn reference16_generateShadowIndexBuffer(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+    vertex_stride: usize,
+) void;
+pub extern fn reference16_generateShadowIndexBufferMulti(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    streams: ?[*]const Stream,
+    stream_count: usize,
+) void;
+pub extern fn reference16_generateAdjacencyIndexBuffer(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) void;
+pub extern fn reference16_generateTessellationIndexBuffer(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) void;
+pub extern fn reference16_generateProvokingIndexBuffer(
+    destination: ?[*]u16,
+    reorder: ?[*]u32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+) usize;
+pub extern fn reference16_optimizeVertexCache(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+) void;
+pub extern fn reference16_optimizeVertexCacheStrip(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+) void;
+pub extern fn reference16_optimizeVertexCacheFifo(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    cache_size: u32,
+) void;
+pub extern fn reference16_optimizeOverdraw(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    threshold: f32,
+) void;
+pub extern fn reference16_optimizeVertexFetchRemap(
+    destination: ?[*]u32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+) usize;
+pub extern fn reference16_optimizeVertexFetch(
+    destination: ?*anyopaque,
+    indices: ?[*]u16,
+    index_count: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+) usize;
+pub extern fn reference16_encodeIndexBuffer(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    indices: ?[*]const u16,
+    index_count: usize,
+) usize;
+pub extern fn reference16_decodeIndexBuffer(
+    destination: ?[*]u16,
+    index_count: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int;
+pub extern fn reference16_encodeIndexSequence(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    indices: ?[*]const u16,
+    index_count: usize,
+) usize;
+pub extern fn reference16_decodeIndexSequence(
+    destination: ?[*]u16,
+    index_count: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int;
+pub extern fn reference16_simplify(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize;
+pub extern fn reference16_simplifyWithAttributes(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]const f32,
+    vertex_attributes_stride: usize,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize;
+pub extern fn reference16_simplifyWithUpdate(
+    indices: ?[*]u16,
+    index_count: usize,
+    vertex_positions: ?[*]f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]f32,
+    vertex_attributes_stride: usize,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize;
+pub extern fn reference16_simplifySloppy(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_index_count: usize,
+    target_error: f32,
+    result_error: ?*f32,
+) usize;
+pub extern fn reference16_simplifySloppyLocks(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    result_error: ?*f32,
+) usize;
+pub extern fn reference16_simplifyPrune(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_error: f32,
+) usize;
+pub extern fn reference16_stripify(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    restart_index: u16,
+) usize;
+pub extern fn reference16_unstripify(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    restart_index: u16,
+) usize;
+pub extern fn reference16_analyzeVertexCache(
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    cache_size: u32,
+    warp_size: u32,
+    primgroup_size: u32,
+) VertexCacheStatistics;
+pub extern fn reference16_analyzeVertexFetch(
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    vertex_size: usize,
+) VertexFetchStatistics;
+pub extern fn reference16_analyzeOverdraw(
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) OverdrawStatistics;
+pub extern fn reference16_analyzeCoverage(
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) CoverageStatistics;
+pub extern fn reference16_buildMeshlets(
+    meshlets: ?[*]Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    max_triangles: usize,
+    cone_weight: f32,
+) usize;
+pub extern fn reference16_buildMeshletsScan(
+    meshlets: ?[*]Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_count: usize,
+    max_vertices: usize,
+    max_triangles: usize,
+) usize;
+pub extern fn reference16_buildMeshletsFlex(
+    meshlets: ?[*]Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    min_triangles: usize,
+    max_triangles: usize,
+    cone_weight: f32,
+    split_factor: f32,
+) usize;
+pub extern fn reference16_buildMeshletsSpatial(
+    meshlets: ?[*]Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    min_triangles: usize,
+    max_triangles: usize,
+    fill_weight: f32,
+) usize;
+pub extern fn reference16_computeClusterBounds(
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) Bounds;
+pub extern fn reference16_partitionClusters(
+    destination: ?[*]u32,
+    cluster_indices: ?[*]const u16,
+    total_index_count: usize,
+    cluster_index_counts: ?[*]const u32,
+    cluster_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_partition_size: usize,
+) usize;
+pub extern fn reference16_spatialSortTriangles(
+    destination: ?[*]u16,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) void;
+pub extern fn reference16_generateTangents(
+    result: ?[*]f32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_normals: ?[*]const f32,
+    vertex_normals_stride: usize,
+    vertex_uvs: ?[*]const f32,
+    vertex_uvs_stride: usize,
+    options: u32,
+) void;
+pub extern fn reference16_generateNormals(
+    result: ?[*]f32,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    crease_angle: f32,
+    smoothing: f32,
+) void;
+pub extern fn reference16_remesh(
+    destination: ?[*]f32,
+    max_triangle_count: usize,
+    indices: ?[*]const u16,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    resolution: c_int,
+    options: u32,
+) usize;

@@ -92,16 +92,16 @@ fn checkOverdraw(indices: []const u32, data: []const f32, stride: usize, thresho
         stride * @sizeOf(f32),
         threshold,
     );
-    try mo.optimizeOverdraw(gpa, got, indices, positions, threshold);
+    try mo.optimizeOverdraw(u32, gpa, got, indices, positions, threshold);
     try common.expectSame(u32, "indices", want, got);
 
     // In place.
     @memcpy(got, indices);
-    try mo.optimizeOverdraw(gpa, got, got, positions, threshold);
+    try mo.optimizeOverdraw(u32, gpa, got, got, positions, threshold);
     try common.expectSame(u32, "indices in place", want, got);
 
     // Again, into a buffer holding other values.
     @memset(got, 0x55555555);
-    try mo.optimizeOverdraw(gpa, got, indices, positions, threshold);
+    try mo.optimizeOverdraw(u32, gpa, got, indices, positions, threshold);
     try common.expectSame(u32, "indices again", want, got);
 }

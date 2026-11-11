@@ -5,6 +5,7 @@
 //! angle generateNormals takes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
@@ -78,6 +79,7 @@ fn checkTangents(
     );
     const streams: Streams = .of(vertices);
     try mo.generateTangents(
+        u32,
         gpa,
         got,
         indices,
@@ -91,6 +93,7 @@ fn checkTangents(
     // The port again, over a different fill: the same tangents.
     @memset(std.mem.sliceAsBytes(got), 0x55);
     try mo.generateTangents(
+        u32,
         gpa,
         got,
         indices,
@@ -135,31 +138,15 @@ fn checkNormals(
         crease_angle,
         smoothing,
     );
-    try mo.generateNormals(gpa, got, indices, positions, crease_angle, smoothing);
+    try mo.generateNormals(u32, gpa, got, indices, positions, crease_angle, smoothing);
     try expectSameFloats("generateNormals", want, got);
 
     @memset(std.mem.sliceAsBytes(got), 0x55);
-    try mo.generateNormals(gpa, got, indices, positions, crease_angle, smoothing);
+    try mo.generateNormals(u32, gpa, got, indices, positions, crease_angle, smoothing);
     try expectSameFloats("generateNormals, second run", want, got);
 }
 
-/// `common.expectSame`, except that a NaN matches any NaN. Non-finite or
-/// overflowing inputs make NaNs, and when an operation's operands hold
-/// several, LLVM leaves open which one it returns, so a NaN's sign and
-/// payload follow how each compiler ordered the operands, on both sides.
-fn expectSameFloats(what: []const u8, want: []const f32, got: []const f32) !void {
-    if (want.len != got.len) return common.expectSame(f32, what, want, got);
-    for (want, got, 0..) |w, g, i| {
-        if (std.math.isNan(w) and std.math.isNan(g)) continue;
-        if (@as(u32, @bitCast(w)) != @as(u32, @bitCast(g))) {
-            std.debug.print(
-                "{s}: item {d} differs: original {any}, port {any}\n",
-                .{ what, i, w, g },
-            );
-            return error.Mismatch;
-        }
-    }
-}
+const expectSameFloats = common.expectSameAnyNan;
 
 const crease_angles = [_]f32{ 0, 1e-6, 0.3, 1, std.math.pi / 2.0, 2, 3, 3.1415927 };
 const smoothings = [_]f32{ 0, 0.25, 1, 2.5, 5, 9.5, 10, 11, 3e9, std.math.inf(f32) };
@@ -347,13 +334,30 @@ test "normals match the original on fuzzed meshes" {
 }
 
 test "the crease cosine matches the system libm on every angle from 0 to pi" {
-    var bits: u32 = 0;
     // 3.1415927, the largest crease angle.
-    while (bits <= 0x40490fdb) : (bits += 1) {
-        const x: f32 = @bitCast(bits);
+    try expectSameCosf(0, 0x40490fdb, 1);
+}
+
+test "the cosine matches the system libm on every float" {
+    // Every float in the optimized modes; every 7th in Debug, where the
+    // whole sweep takes minutes.
+    const step = if (builtin.mode == .debug) 7 else 1;
+    try expectSameCosf(0x40490fdc, std.math.maxInt(u32), step);
+}
+
+/// Compares the port's cosine with the system libm's on the float bits
+/// from `first` to `last`, `step` apart.
+fn expectSameCosf(first: u32, last: u32, step: u32) !void {
+    var bits: u64 = first;
+    while (bits <= last) : (bits += step) {
+        const x: f32 = @bitCast(@as(u32, @intCast(bits)));
         const want: u32 = @bitCast(c.reference_cosf(x));
         const got: u32 = @bitCast(mo.tangentspace.cosfForTest(x));
-        if (want != got) {
+        // A NaN result is any NaN: the libm returns the input NaN, quieted,
+        // or makes a new one, as the port does.
+        if (want != got and !(std.math.isNan(@as(f32, @bitCast(want))) and
+            std.math.isNan(@as(f32, @bitCast(got)))))
+        {
             std.debug.print(
                 "cosf(0x{x:0>8}): libm 0x{x:0>8}, port 0x{x:0>8}\n",
                 .{ bits, want, got },

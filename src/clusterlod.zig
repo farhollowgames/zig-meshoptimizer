@@ -258,7 +258,10 @@ pub fn defaultConfigRT(max_triangles: usize) Config {
 /// state. An error from `output` stops the build, and `build` returns it.
 ///
 /// The clusters' indices are `build`'s scratch memory, valid only until
-/// `output` returns.
+/// `output` returns. Its lists grow as the levels are built, as the
+/// original's vectors do, so `gpa` frees out of allocation order: it must
+/// be a general-purpose allocator, not a stack-ordered one such as an
+/// `AllocatorCache` handle.
 pub fn build(gpa: Allocator, config: Config, mesh: Mesh, context: anytype) !void {
     comptime checkContext(@TypeOf(context));
 
@@ -622,7 +625,7 @@ fn checkContext(comptime Context: type) void {
 }
 
 fn boundsCompute(mesh: Mesh, indices: []const u32, err: f32) Bounds {
-    const bounds = meshletutils.computeClusterBounds(indices, mesh.positions);
+    const bounds = meshletutils.computeClusterBounds(u32, indices, mesh.positions);
 
     return .{ .center = bounds.center, .radius = bounds.radius, .@"error" = err };
 }
@@ -674,6 +677,7 @@ fn clusterize(
 
     const meshlet_count = if (config.cluster_spatial)
         try clusterizer.buildMeshletsSpatial(
+            u32,
             gpa,
             meshlets,
             meshlet_vertices,
@@ -687,6 +691,7 @@ fn clusterize(
         )
     else
         try clusterizer.buildMeshletsFlex(
+            u32,
             gpa,
             meshlets,
             meshlet_vertices,
@@ -774,6 +779,7 @@ fn partition(
     const cluster_part = try gpa.alloc(u32, cluster_count);
     defer gpa.free(cluster_part);
     const partition_count = try partitionClusters(
+        u32,
         gpa,
         cluster_part,
         cluster_indices[0..written],
@@ -899,6 +905,7 @@ fn simplifyFallback(
 
     const positions: VertexFloats = .fromField(SloppyVertex, "position", subset);
     const count = try simplifier.simplifySloppy(
+        u32,
         gpa,
         lod.items,
         lod.items,
@@ -944,6 +951,7 @@ fn simplify(
     const vertex_lock: []const SimplifyVertexFlags = @ptrCast(locks);
 
     const count = try simplifier.simplifyWithAttributes(
+        u32,
         gpa,
         lod.items,
         indices,
@@ -967,6 +975,7 @@ fn simplify(
         // The simplifier writes every index first, and the list still has
         // room for them.
         const permissive_count = try simplifier.simplifyWithAttributes(
+            u32,
             gpa,
             lod.allocatedSlice()[0..indices.len],
             indices,

@@ -186,7 +186,7 @@ large mesh.
 | --- | --- |
 | `generateTangents`; `TangentOptions` `compatible` and `zero_fallback` | benchmarked |
 | `generateNormals`; crease angles 0 to pi, smoothing 0 and up (passes capped at 10) | benchmarked |
-| glibc's `cosf`, which the crease test calls, as the port's own function (matches glibc on every float from 0 to pi) | oracle-tested |
+| `cosf`, which the crease test calls, as the port's own function (`src/cosf.zig`, translated from Arm's optimized-routines, which glibc's is built from; matches glibc on every float) | oracle-tested |
 
 ## Remeshing (remesher.cpp)
 
@@ -206,7 +206,7 @@ large mesh.
 | `OpacityMapFormat` `two_state` and `four_state` | oracle-tested |
 | `opacityMapEntrySize` | oracle-tested |
 | `opacityMapCompact`: equal micromaps merged, uniform ones turned into special indices | oracle-tested |
-| glibc's `log2f`, which the level choice calls, as the port's own function (matches glibc on every float from 1 up) | oracle-tested |
+| `log2f`, which the level choice calls, as the port's own function (`src/log2f.zig`, translated from Arm's optimized-routines, which glibc's is built from; matches glibc on every float) | oracle-tested |
 
 ## Quantization (quantization.cpp, meshoptimizer.h)
 
@@ -263,7 +263,8 @@ large mesh.
 | function, option or mode | state |
 | --- | --- |
 | `MESHOPTIMIZER_VERSION` (`version`) | oracle-tested |
-| the C++ templates for 16-bit and other index types, and `meshopt_IndexAdapter` | left out (approved): the port's functions take `u32` indices (the decoders also `u16`) |
+| the C++ templates for 16-bit indices, and `meshopt_IndexAdapter`: every function the original templates takes its index type as a comptime parameter, `u16` or `u32` | oracle-tested, against the original's 16-bit templates |
+| the templates for other index types (the original's accept any integer type) | left out (approved scope: `u16` and `u32`, the index types GPUs take) |
 
 ## Left out, approved by the author
 
@@ -286,7 +287,6 @@ large mesh.
   the meshlet's newest, off in upstream's builds.
 - **The NEON vertex decoder's recomputed delta base on Apple and Windows**:
   the same values by a shorter dependency chain.
-- **The C++ index-type templates**, above.
 - **Cluster LOD**: `clodBuild` without an output callback (a context whose `output` returns -1 does the same); the C++ template overload for lambdas (any context with `output`); NaN, infinite or overflowing positions, on which `computeClusterBounds` asserts (the original too, with asserts on); an `attribute_protect_mask` with attribute strides of 32 floats or more, where the original shifts past 31 bits (undefined) and the port reads attributes 0 to 31.
 
 ## Differences from the original, approved by the author
@@ -307,9 +307,11 @@ Output:
   the aarch64 build clamps. The port's NEON filter kernels use the NEON
   conversions, as the original's do. Outside those kernels, the same input
   gives the same output on every machine.
-- **`cosf` and `log2f`** are the port's own copies of glibc's, which the
-  original calls through its C library: the original's results with
-  glibc on every target, and other C libraries' rounding nowhere.
+- **`cosf` and `log2f`** are the port's own, translated from Arm's
+  optimized-routines, the code glibc's are built from, in the form glibc
+  runs on x86-64 CPUs with fused multiply-add. The original calls them
+  through its C library: the port gives the original's results with glibc
+  on every target, and other C libraries' rounding nowhere.
 - **NaN results** in the tangent, normal and simplifier tests compare as
   any NaN: where an operation's operands hold several NaNs, LLVM does not
   fix which one it returns, in either build, so their sign and payload are

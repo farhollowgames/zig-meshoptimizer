@@ -8,6 +8,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 
 pub const VertexCacheStatistics = struct {
     vertices_transformed: u32 = 0,
@@ -26,13 +27,15 @@ pub const VertexCacheStatistics = struct {
 /// groups of `primgroup_size` triangles (0 for none). The model is simple,
 /// and real GPUs may differ.
 pub fn analyzeVertexCache(
+    comptime Index: type,
     gpa: Allocator,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
     cache_size: u32,
     warp_size: u32,
     primgroup_size: u32,
 ) Allocator.Error!VertexCacheStatistics {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(cache_size >= 3);
     assert(warp_size == 0 or warp_size >= 3);
@@ -119,11 +122,13 @@ pub const VertexFetchStatistics = struct {
 /// 64-byte lines through a 128 KiB direct-mapped cache, for vertices of
 /// `vertex_size` bytes. The model is simple, and real GPUs may differ.
 pub fn analyzeVertexFetch(
+    comptime Index: type,
     gpa: Allocator,
-    indices: []const u32,
+    indices: []const Index,
     vertex_count: usize,
     vertex_size: usize,
 ) Allocator.Error!VertexFetchStatistics {
+    comptime checkIndex(Index);
     assert(vertex_size > 0 and vertex_size <= 256);
 
     var scratch: Scratch = .init(gpa);
@@ -183,7 +188,7 @@ const testing = std.testing;
 test "a cached vertex costs nothing again" {
     // Two triangles sharing an edge: 4 vertices for 2 triangles.
     const indices = [_]u32{ 0, 1, 2, 2, 1, 3 };
-    const stats = try analyzeVertexCache(testing.allocator, &indices, 4, 16, 0, 0);
+    const stats = try analyzeVertexCache(u32, testing.allocator, &indices, 4, 16, 0, 0);
     try testing.expectEqual(4, stats.vertices_transformed);
     try testing.expectEqual(2.0, stats.acmr);
     try testing.expectEqual(1.0, stats.atvr);

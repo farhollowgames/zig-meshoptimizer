@@ -127,8 +127,8 @@ fn checkClusterBounds(indices: []const u32, positions: mo.VertexFloats, count: u
         count,
         positions.stride * @sizeOf(f32),
     );
-    const got = mo.computeClusterBounds(indices, positions);
-    const again = mo.computeClusterBounds(indices, positions);
+    const got = mo.computeClusterBounds(u32, indices, positions);
+    const again = mo.computeClusterBounds(u32, indices, positions);
     try expectSameBounds("computeClusterBounds", want, got, again);
 }
 
@@ -241,6 +241,61 @@ test "computeClusterBounds matches the original on degenerate clusters" {
     try checkClusterBounds(&.{ 0, 1, 2, 0, 2, 1 }, unit, 3);
     try checkClusterBounds(&.{ 0, 1, 2 }, unit, 3);
     try checkClusterBounds(&.{ 0, 1, 2, 0, 1, 2, 2, 2, 1 }, unit, 3);
+}
+
+test "computeClusterBounds matches the original on NaN and overflowing positions" {
+    // A NaN corner, and finite corners 1e20 apart, whose normal overflows:
+    // both give NaN normals, which the original's release build carries
+    // through to its cone.
+    const nan = std.math.nan(f32);
+    const cases = [_][9]f32{
+        .{ 0, 0, 0, 1, 0, 0, 0, 1, nan },
+        .{ 0, 0, 0, 1e20, 0, 0, 0, 1e20, 0 },
+        .{ nan, nan, nan, nan, nan, nan, nan, nan, nan },
+        .{ 0, 0, 0, std.math.inf(f32), 0, 0, 0, 1, 0 },
+    };
+    for (&cases) |*positions| {
+        const indices = [_]u32{ 0, 1, 2 };
+        const want = c.meshopt_computeClusterBounds(&indices, 3, positions, 3, 12);
+        const got = mo.computeClusterBounds(u32, &indices, .init(positions, 3));
+        try common.expectSameBoundsAnyNan("computeClusterBounds", want, got);
+    }
+}
+
+test "computeSphereBounds matches the original on special points and radii" {
+    const points = &common.special_points;
+    const count_max = points.len / 3;
+    const radii_values = [_]f32{
+        0,                 1,                  -1,   std.math.nan(f32),
+        std.math.inf(f32), -std.math.inf(f32), 1e30, 0.5,
+        3,
+    };
+    var prng: std.Random.DefaultPrng = .init(7);
+    const rng = prng.random();
+    // Every prefix of every rotation of the special points, with and
+    // without radii.
+    var rotated: [common.special_points.len]f32 = undefined;
+    for (0..count_max) |shift| {
+        for (0..count_max) |i| {
+            rotated[i * 3 ..][0..3].* = points[((i + shift) % count_max) * 3 ..][0..3].*;
+        }
+        for (1..count_max + 1) |n| {
+            const data = rotated[0 .. n * 3];
+            const want = c.meshopt_computeSphereBounds(data.ptr, n, 12, null, 0);
+            const got = mo.computeSphereBounds(.init(data, 3), null);
+            try common.expectSameBoundsAnyNan("computeSphereBounds", want, got);
+
+            var radii: [count_max]f32 = undefined;
+            for (&radii) |*r| r.* = radii_values[rng.uintLessThan(usize, radii_values.len)];
+            const want_radii = c.meshopt_computeSphereBounds(data.ptr, n, 12, &radii, 4);
+            const got_radii = mo.computeSphereBounds(.init(data, 3), .init(radii[0..n], 1));
+            try common.expectSameBoundsAnyNan(
+                "computeSphereBounds with radii",
+                want_radii,
+                got_radii,
+            );
+        }
+    }
 }
 
 test "extractMeshletIndices matches the original when low bits collide" {

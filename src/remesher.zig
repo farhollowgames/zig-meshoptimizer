@@ -15,6 +15,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
+const checkIndex = @import("index.zig").check;
 const truncate = @import("convert.zig").truncate;
 
 /// What `remesh` builds. Each field is the bit of the original's
@@ -327,12 +328,13 @@ fn measureGrid(positions: VertexFloats, resolution: u32, offset: *[3]f32) f32 {
 /// voxels, which `rowpack` has numbered, with their quadrics if
 /// `with_quadrics`.
 fn voxelize(
+    comptime Index: type,
     comptime accumulate: bool,
     comptime with_quadrics: bool,
     grid: []u8,
     rowmap: []const u32,
     voxels: []Voxel,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     resolution: usize,
     scale: f32,
@@ -934,13 +936,15 @@ inline fn sliceCode(data: []const u8, x: usize, resolution: usize, slice: usize)
 /// bound, for sizing `destination`; otherwise it is the whole mesh's,
 /// written or not.
 pub fn remesh(
+    comptime Index: type,
     gpa: Allocator,
     destination: ?[]f32,
-    indices: []const u32,
+    indices: []const Index,
     positions: VertexFloats,
     resolution: u32,
     options: RemeshOptions,
 ) Allocator.Error!usize {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(positions.stride >= 3 and positions.stride <= 64);
     assert(resolution >= 4 and resolution <= 256);
@@ -958,7 +962,7 @@ pub fn remesh(
     const grid = try scratch.alloc(u8, size * size * size);
     @memset(grid, 0);
 
-    voxelize(false, false, grid, &.{}, &.{}, indices, positions, size, scale, offset);
+    voxelize(Index, false, false, grid, &.{}, &.{}, indices, positions, size, scale, offset);
 
     // Each row's first voxel; empty rows are marked, to skip them after.
     const rowmap = try scratch.alloc(u32, size * size);
@@ -987,9 +991,9 @@ pub fn remesh(
 
     // The second pass gathers what each voxel needs for its position.
     if (options.solve) {
-        voxelize(true, true, grid, rowmap, voxels, indices, positions, size, scale, offset);
+        voxelize(Index, true, true, grid, rowmap, voxels, indices, positions, size, scale, offset);
     } else {
-        voxelize(true, false, grid, rowmap, voxels, indices, positions, size, scale, offset);
+        voxelize(Index, true, false, grid, rowmap, voxels, indices, positions, size, scale, offset);
     }
 
     // One position per voxel, for every triangle corner on it.
@@ -1040,9 +1044,9 @@ test "a cube remeshes into a closed mesh" {
         0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
     };
     const view: VertexFloats = .init(&positions, 3);
-    const bound = try remesh(testing.allocator, null, &indices, view, 8, .{});
+    const bound = try remesh(u32, testing.allocator, null, &indices, view, 8, .{});
     const triangles = try testing.allocator.alloc(f32, bound * 9);
     defer testing.allocator.free(triangles);
-    const count = try remesh(testing.allocator, triangles, &indices, view, 8, .{});
+    const count = try remesh(u32, testing.allocator, triangles, &indices, view, 8, .{});
     try testing.expect(count > 0 and count <= bound);
 }

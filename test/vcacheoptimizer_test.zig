@@ -66,10 +66,10 @@ fn runPort(
     const d = destination;
     const n = vertex_count;
     switch (optimizer) {
-        .default => try mo.optimizeVertexCache(gpa, d, indices, n),
-        .strip => try mo.optimizeVertexCacheStrip(gpa, d, indices, n),
-        .fifo => |size| try mo.optimizeVertexCacheFifo(gpa, d, indices, n, size),
-        .table => |table| try mo.optimizeVertexCacheTable(gpa, d, indices, n, table),
+        .default => try mo.optimizeVertexCache(u32, gpa, d, indices, n),
+        .strip => try mo.optimizeVertexCacheStrip(u32, gpa, d, indices, n),
+        .fifo => |size| try mo.optimizeVertexCacheFifo(u32, gpa, d, indices, n, size),
+        .table => |table| try mo.optimizeVertexCacheTable(u32, gpa, d, indices, n, table),
     }
 }
 
@@ -179,4 +179,16 @@ fn checkFuzzed(seed: u64) !void {
 
 test "optimizeVertexCache and its variants match the original on fuzzed meshes" {
     try common.fuzz("optimizeVertexCache", 0, checkFuzzed);
+}
+
+test "optimizeVertexCacheFifo matches the original at the largest cache sizes" {
+    // The original's first timestamp, cache_size + 1, wraps at the top.
+    const indices = [_]u32{ 0, 1, 2, 2, 1, 3, 3, 1, 4, 4, 1, 0 };
+    var want: [indices.len]u32 = undefined;
+    var got: [indices.len]u32 = undefined;
+    for ([_]u32{ std.math.maxInt(u32) - 1, std.math.maxInt(u32) }) |cache_size| {
+        c.meshopt_optimizeVertexCacheFifo(&want, &indices, indices.len, 5, cache_size);
+        try mo.optimizeVertexCacheFifo(u32, gpa, &got, &indices, 5, cache_size);
+        try common.expectSame(u32, "optimizeVertexCacheFifo", &want, &got);
+    }
 }

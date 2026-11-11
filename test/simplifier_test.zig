@@ -102,17 +102,8 @@ fn attributePointer(vertices: []const f32, call: Call) ?[*]const f32 {
 /// `common.expectSame` for floats, except that a NaN matches any NaN when
 /// `mesh` holds non-finite floats.
 fn expectSameFloats(mesh: FloatMesh, what: []const u8, want: []const f32, got: []const f32) !void {
-    if (!mesh.non_finite or want.len != got.len) return common.expectSame(f32, what, want, got);
-    for (want, got, 0..) |w, g, i| {
-        if (std.math.isNan(w) and std.math.isNan(g)) continue;
-        if (@as(u32, @bitCast(w)) != @as(u32, @bitCast(g))) {
-            std.debug.print(
-                "{s}: item {d} differs: original {any}, port {any}\n",
-                .{ what, i, w, g },
-            );
-            return error.Mismatch;
-        }
-    }
+    if (!mesh.non_finite) return common.expectSame(f32, what, want, got);
+    return common.expectSameAnyNan(what, want, got);
 }
 
 fn fillWith(comptime T: type, items: []T, comptime fill: u32) void {
@@ -181,6 +172,7 @@ fn checkSimplify(mesh: FloatMesh, call: Call) !void {
 fn portSimplify(mesh: FloatMesh, call: Call, destination: []u32, result_error: *f32) !usize {
     if (call.weights.len == 0 and call.locks == null and !call.with_attributes) {
         return mo.simplify(
+            u32,
             gpa,
             destination,
             mesh.indices,
@@ -192,6 +184,7 @@ fn portSimplify(mesh: FloatMesh, call: Call, destination: []u32, result_error: *
         );
     }
     return mo.simplifyWithAttributes(
+        u32,
         gpa,
         destination,
         mesh.indices,
@@ -233,6 +226,7 @@ fn checkSimplifyInPlace(mesh: FloatMesh, call: Call) !void {
     );
     var got_error: f32 = -2;
     const got_count = try mo.simplifyWithAttributes(
+        u32,
         gpa,
         got,
         got,
@@ -293,6 +287,7 @@ fn checkUpdate(mesh: FloatMesh, call: Call) !void {
 
 fn portUpdate(copy: *Copy, stride: usize, call: Call, result_error: *f32) !usize {
     return mo.simplifyWithUpdate(
+        u32,
         gpa,
         copy.indices,
         .init(copy.vertices, stride),
@@ -355,6 +350,7 @@ fn checkEdge(mesh: FloatMesh, call: Call) !void {
     var got_error: f32 = -2;
     const got_count = if (call.options.internal_solve)
         try mo.simplifyEdge(
+            u32,
             gpa,
             got.indices,
             mesh.indices,
@@ -369,6 +365,7 @@ fn checkEdge(mesh: FloatMesh, call: Call) !void {
         )
     else
         try mo.simplifyEdge(
+            u32,
             gpa,
             got.indices,
             mesh.indices,
@@ -428,6 +425,7 @@ fn checkSloppy(
     );
     var got_error: f32 = -2;
     const got_count = try mo.simplifySloppy(
+        u32,
         gpa,
         got,
         if (in_place) got else mesh.indices,
@@ -439,6 +437,7 @@ fn checkSloppy(
     );
     var again_error: f32 = -3;
     const again_count = try mo.simplifySloppy(
+        u32,
         gpa,
         again,
         if (in_place) again else mesh.indices,
@@ -482,6 +481,7 @@ fn checkPrune(mesh: FloatMesh, target_error: f32, in_place: bool) !void {
         target_error,
     );
     const got_count = try mo.simplifyPrune(
+        u32,
         gpa,
         got,
         if (in_place) got else mesh.indices,
@@ -489,6 +489,7 @@ fn checkPrune(mesh: FloatMesh, target_error: f32, in_place: bool) !void {
         target_error,
     );
     const again_count = try mo.simplifyPrune(
+        u32,
         gpa,
         again,
         mesh.indices,
@@ -1599,6 +1600,115 @@ fn fuzzPoints(seed: u64) !void {
         else => rng.float(f32) * 5,
     };
     try checkPoints(mesh, color_offset, weight, target);
+}
+
+test "sloppy and point simplification match the original on special positions" {
+    try common.fuzz("special positions", 5 << 20, fuzzSpecialPositions);
+}
+
+/// A float that is often NaN, infinite, huge, tiny or any bit pattern.
+fn specialFloat(rng: std.Random) f32 {
+    return switch (rng.uintLessThan(u32, 8)) {
+        0 => common.special_points[rng.uintLessThan(usize, common.special_points.len)],
+        1 => @bitCast(rng.int(u32)),
+        else => rng.float(f32) * 10 - 5,
+    };
+}
+
+/// The sloppy and point simplifiers on any floats, vertex counts on both
+/// sides of their eight-vertex steps, and random lock flags.
+fn fuzzSpecialPositions(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const vertex_count = rng.intRangeAtMost(usize, 1, 200);
+    const stride = rng.intRangeAtMost(usize, 3, 9);
+    const data = try gpa.alloc(f32, vertex_count * stride);
+    defer gpa.free(data);
+    for (data) |*v| v.* = specialFloat(rng);
+
+    const index_count = rng.uintAtMost(usize, 300) * 3;
+    const indices = try gpa.alloc(u32, index_count);
+    defer gpa.free(indices);
+    for (indices) |*i| i.* = rng.uintLessThan(u32, @intCast(vertex_count));
+
+    const locks = try gpa.alloc(u8, vertex_count);
+    defer gpa.free(locks);
+    for (locks) |*l| l.* = if (rng.boolean()) rng.int(u8) else 0;
+    const use_locks = rng.boolean();
+    const flags: ?[]const mo.SimplifyVertexFlags = if (use_locks) @ptrCast(locks) else null;
+
+    const target_errors = [_]f32{ 0, 1e-3, 1e-2, 0.1, 1, float_max };
+    const target_error = target_errors[rng.uintLessThan(usize, target_errors.len)];
+    const target = rng.uintAtMost(usize, index_count / 3) * 3;
+
+    const want = try gpa.alloc(u32, index_count);
+    defer gpa.free(want);
+    const got = try gpa.alloc(u32, index_count);
+    defer gpa.free(got);
+    @memset(want, fill_compared);
+    @memset(got, fill_compared);
+    var want_error: f32 = -1;
+    var got_error: f32 = -2;
+    const want_count = c.meshopt_simplifySloppy(
+        want.ptr,
+        indices.ptr,
+        index_count,
+        data.ptr,
+        vertex_count,
+        stride * 4,
+        if (use_locks) locks.ptr else null,
+        target,
+        target_error,
+        &want_error,
+    );
+    const positions: mo.VertexFloats = .init(data, stride);
+    const got_count = try mo.simplifySloppy(
+        u32,
+        gpa,
+        got,
+        indices,
+        positions,
+        flags,
+        target,
+        target_error,
+        &got_error,
+    );
+    try common.expectSameValue(usize, "sloppy count", want_count, got_count);
+    try common.expectSame(u32, "sloppy indices", want, got);
+    if (!(std.math.isNan(want_error) and std.math.isNan(got_error))) {
+        try common.expectSameValue(f32, "sloppy error", want_error, got_error);
+    }
+
+    const point_target = rng.uintAtMost(usize, vertex_count);
+    const with_colors = stride >= 6 and rng.boolean();
+    const color_weight: f32 = if (rng.boolean()) 1 else rng.float(f32) * 4;
+    const want_points = try gpa.alloc(u32, vertex_count);
+    defer gpa.free(want_points);
+    const got_points = try gpa.alloc(u32, vertex_count);
+    defer gpa.free(got_points);
+    @memset(want_points, fill_compared);
+    @memset(got_points, fill_compared);
+    const want_point_count = c.meshopt_simplifyPoints(
+        want_points.ptr,
+        data.ptr,
+        vertex_count,
+        stride * 4,
+        if (with_colors) data[3..].ptr else null,
+        if (with_colors) stride * 4 else 0,
+        color_weight,
+        point_target,
+    );
+    const colors: ?mo.VertexFloats = if (with_colors) .init(data[3..], stride) else null;
+    const got_point_count = try mo.simplifyPoints(
+        gpa,
+        got_points,
+        positions,
+        colors,
+        color_weight,
+        point_target,
+    );
+    try common.expectSameValue(usize, "point count", want_point_count, got_point_count);
+    try common.expectSame(u32, "points", want_points, got_points);
 }
 
 test "fuzzed meshes prune as the original's" {

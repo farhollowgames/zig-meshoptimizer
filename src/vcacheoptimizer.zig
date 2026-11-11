@@ -11,6 +11,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
+const checkIndex = @import("index.zig").check;
 
 const none = std.math.maxInt(u32);
 
@@ -62,8 +63,9 @@ pub const TriangleAdjacency = struct {
     data: []u32,
 
     pub fn init(
+        comptime Index: type,
         scratch: *Scratch,
-        indices: []const u32,
+        indices: []const Index,
         vertex_count: usize,
     ) Allocator.Error!TriangleAdjacency {
         const face_count = indices.len / 3;
@@ -197,12 +199,14 @@ fn nextTriangleDeadEnd(input_cursor: *u32, emitted_flags: []const bool) u32 {
 /// holds `indices.len` entries, and may be `indices` itself. Optimize each
 /// draw call's range of an index buffer on its own.
 pub fn optimizeVertexCacheTable(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     table: *const VertexScoreTable,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
 
     var scratch: Scratch = .init(gpa);
@@ -212,7 +216,7 @@ pub fn optimizeVertexCacheTable(
 
     var source = indices;
     if (destination.ptr == indices.ptr) {
-        const copy = try scratch.alloc(u32, indices.len);
+        const copy = try scratch.alloc(Index, indices.len);
         @memcpy(copy, indices);
         source = copy;
     }
@@ -222,7 +226,7 @@ pub fn optimizeVertexCacheTable(
 
     const face_count = source.len / 3;
 
-    const adjacency: TriangleAdjacency = try .init(&scratch, source, vertex_count);
+    const adjacency: TriangleAdjacency = try .init(Index, &scratch, source, vertex_count);
 
     // Live triangle counts are the adjacency counts: emitting a triangle
     // removes it from the adjacency lists, so they always match.
@@ -331,24 +335,26 @@ pub fn optimizeVertexCacheTable(
 /// may be `indices` itself. Optimize each draw call's range of an index
 /// buffer on its own.
 pub fn optimizeVertexCache(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
 ) Allocator.Error!void {
-    return optimizeVertexCacheTable(gpa, destination, indices, vertex_count, &.default);
+    return optimizeVertexCacheTable(Index, gpa, destination, indices, vertex_count, &.default);
 }
 
 /// `optimizeVertexCache` for strip-like caches: worse for the GPU's vertex
 /// cache, but the order makes shorter triangle strips and compresses
 /// better.
 pub fn optimizeVertexCacheStrip(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
 ) Allocator.Error!void {
-    return optimizeVertexCacheTable(gpa, destination, indices, vertex_count, &.strip);
+    return optimizeVertexCacheTable(Index, gpa, destination, indices, vertex_count, &.strip);
 }
 
 /// `optimizeVertexCache` by simulating a FIFO cache of `cache_size`
@@ -356,12 +362,14 @@ pub fn optimizeVertexCacheStrip(
 /// Choose a `cache_size` below the GPU's real cache size, so the cache does
 /// not thrash.
 pub fn optimizeVertexCacheFifo(
+    comptime Index: type,
     gpa: Allocator,
-    destination: []u32,
-    indices: []const u32,
+    destination: []Index,
+    indices: []const Index,
     vertex_count: usize,
     cache_size: u32,
 ) Allocator.Error!void {
+    comptime checkIndex(Index);
     assert(indices.len % 3 == 0);
     assert(cache_size >= 3);
 
@@ -372,14 +380,14 @@ pub fn optimizeVertexCacheFifo(
 
     var source = indices;
     if (destination.ptr == indices.ptr) {
-        const copy = try scratch.alloc(u32, indices.len);
+        const copy = try scratch.alloc(Index, indices.len);
         @memcpy(copy, indices);
         source = copy;
     }
 
     const face_count = source.len / 3;
 
-    const adjacency: TriangleAdjacency = try .init(&scratch, source, vertex_count);
+    const adjacency: TriangleAdjacency = try .init(Index, &scratch, source, vertex_count);
 
     const live_triangles = try scratch.alloc(u32, vertex_count);
     @memcpy(live_triangles, adjacency.counts);
@@ -395,7 +403,7 @@ pub fn optimizeVertexCacheFifo(
 
     var current_vertex: u32 = 0;
 
-    var timestamp: u32 = cache_size + 1;
+    var timestamp: u32 = cache_size +% 1;
     // The vertex to restart from at a dead end.
     var input_cursor: u32 = 1;
 
@@ -413,7 +421,7 @@ pub fn optimizeVertexCacheFifo(
             destination[output_triangle * 3 ..][0..3].* = corners;
             output_triangle += 1;
 
-            dead_end[dead_end_top..][0..3].* = corners;
+            dead_end[dead_end_top..][0..3].* = .{ corners[0], corners[1], corners[2] };
             dead_end_top += 3;
 
             for (corners) |corner| live_triangles[corner] -= 1;
@@ -461,9 +469,9 @@ const testing = std.testing;
 test "every triangle comes out once" {
     const indices = [_]u32{ 0, 1, 2, 2, 1, 3, 4, 5, 6, 3, 1, 4 };
     var destination: [indices.len]u32 = undefined;
-    try optimizeVertexCache(testing.allocator, &destination, &indices, 7);
+    try optimizeVertexCache(u32, testing.allocator, &destination, &indices, 7);
     var fifo: [indices.len]u32 = undefined;
-    try optimizeVertexCacheFifo(testing.allocator, &fifo, &indices, 7, 16);
+    try optimizeVertexCacheFifo(u32, testing.allocator, &fifo, &indices, 7, 16);
     for ([_][]const u32{ &destination, &fifo }) |result| {
         var seen: [4]bool = @splat(false);
         for (0..4) |t| {

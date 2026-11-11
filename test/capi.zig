@@ -150,6 +150,7 @@ export fn meshopt_generateVertexRemap(
     vertex_size: usize,
 ) usize {
     return mo.generateVertexRemap(
+        u32,
         hooks,
         itemsMut(u32, destination, vertex_count),
         optionalIndices(indices, index_count),
@@ -168,6 +169,7 @@ export fn meshopt_generateVertexRemapMulti(
 ) usize {
     var buffer: [16]mo.Stream = undefined;
     return mo.generateVertexRemapMulti(
+        u32,
         hooks,
         itemsMut(u32, destination, vertex_count),
         optionalIndices(indices, index_count),
@@ -239,6 +241,7 @@ export fn meshopt_remapIndexBuffer(
     const list = optionalIndices(indices, index_count);
     const vertex_count = if (list) |l| countOf(l) else index_count;
     mo.remapIndexBuffer(
+        u32,
         itemsMut(u32, destination, index_count),
         list,
         items(u32, remap, vertex_count),
@@ -256,6 +259,7 @@ export fn meshopt_filterIndexBuffer(
 ) usize {
     const len = if (vertex_count == 0) 0 else (vertex_count - 1) * vertex_stride + vertex_size;
     return mo.filterIndexBuffer(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -274,6 +278,7 @@ export fn meshopt_filterIndexBufferMulti(
 ) usize {
     var buffer: [16]mo.Stream = undefined;
     return mo.filterIndexBufferMulti(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -293,6 +298,7 @@ export fn meshopt_generateShadowIndexBuffer(
 ) void {
     const len = if (vertex_count == 0) 0 else (vertex_count - 1) * vertex_stride + vertex_size;
     mo.generateShadowIndexBuffer(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -311,6 +317,7 @@ export fn meshopt_generateShadowIndexBufferMulti(
 ) void {
     var buffer: [16]mo.Stream = undefined;
     mo.generateShadowIndexBufferMulti(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -341,6 +348,7 @@ export fn meshopt_generateAdjacencyIndexBuffer(
     vertex_positions_stride: usize,
 ) void {
     mo.generateAdjacencyIndexBuffer(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count * 2),
         items(u32, indices, index_count),
@@ -357,6 +365,7 @@ export fn meshopt_generateTessellationIndexBuffer(
     vertex_positions_stride: usize,
 ) void {
     mo.generateTessellationIndexBuffer(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count * 4),
         items(u32, indices, index_count),
@@ -372,6 +381,7 @@ export fn meshopt_generateProvokingIndexBuffer(
     vertex_count: usize,
 ) usize {
     return mo.generateProvokingIndexBuffer(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         itemsMut(u32, reorder, vertex_count + index_count / 3),
@@ -466,6 +476,7 @@ export fn meshopt_simplify(
     result_error: ?*f32,
 ) usize {
     return mo.simplify(
+        u32,
         hooks,
         destinationOf(destination, index_count),
         items(u32, indices, index_count),
@@ -495,6 +506,7 @@ export fn meshopt_simplifyWithAttributes(
     result_error: ?*f32,
 ) usize {
     return mo.simplifyWithAttributes(
+        u32,
         hooks,
         destinationOf(destination, index_count),
         items(u32, indices, index_count),
@@ -526,6 +538,7 @@ export fn meshopt_simplifyWithUpdate(
     result_error: ?*f32,
 ) usize {
     return mo.simplifyWithUpdate(
+        u32,
         hooks,
         itemsMut(u32, indices, index_count),
         floatsMut(vertex_positions, vertex_count, vertex_positions_stride, 3),
@@ -552,6 +565,7 @@ export fn meshopt_simplifySloppy(
     result_error: ?*f32,
 ) usize {
     return mo.simplifySloppy(
+        u32,
         hooks,
         destinationOf(destination, index_count),
         items(u32, indices, index_count),
@@ -573,6 +587,7 @@ export fn meshopt_simplifyPrune(
     target_error: f32,
 ) usize {
     return mo.simplifyPrune(
+        u32,
         hooks,
         destinationOf(destination, index_count),
         items(u32, indices, index_count),
@@ -798,6 +813,7 @@ export fn meshopt_encodeIndexBuffer(
     index_count: usize,
 ) usize {
     return mo.encodeIndexBuffer(
+        u32,
         itemsMut(u8, buffer, buffer_size),
         items(u32, indices, index_count),
         index_version,
@@ -843,6 +859,7 @@ export fn meshopt_encodeIndexSequence(
     index_count: usize,
 ) usize {
     return mo.encodeIndexSequence(
+        u32,
         itemsMut(u8, buffer, buffer_size),
         items(u32, indices, index_count),
         index_version,
@@ -971,6 +988,7 @@ export fn meshopt_optimizeVertexCache(
     vertex_count: usize,
 ) void {
     mo.optimizeVertexCache(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -985,6 +1003,7 @@ export fn meshopt_optimizeVertexCacheStrip(
     vertex_count: usize,
 ) void {
     mo.optimizeVertexCacheStrip(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -1000,6 +1019,7 @@ export fn meshopt_optimizeVertexCacheFifo(
     cache_size: u32,
 ) void {
     mo.optimizeVertexCacheFifo(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -1031,6 +1051,7 @@ export fn meshopt_buildMeshlets(
 ) usize {
     // The builders write at most index_count vertices and triangle bytes.
     return mo.buildMeshlets(
+        u32,
         hooks,
         meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, max_triangles)),
         itemsMut(u32, meshlet_vertices, index_count),
@@ -1054,6 +1075,7 @@ export fn meshopt_buildMeshletsScan(
     max_triangles: usize,
 ) usize {
     return mo.buildMeshletsScan(
+        u32,
         hooks,
         meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, max_triangles)),
         itemsMut(u32, meshlet_vertices, index_count),
@@ -1089,6 +1111,7 @@ export fn meshopt_buildMeshletsFlex(
     split_factor: f32,
 ) usize {
     return mo.buildMeshletsFlex(
+        u32,
         hooks,
         meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, min_triangles)),
         itemsMut(u32, meshlet_vertices, index_count),
@@ -1118,6 +1141,7 @@ export fn meshopt_buildMeshletsSpatial(
     fill_weight: f32,
 ) usize {
     return mo.buildMeshletsSpatial(
+        u32,
         hooks,
         meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, min_triangles)),
         itemsMut(u32, meshlet_vertices, index_count),
@@ -1181,6 +1205,7 @@ export fn meshopt_computeClusterBounds(
     vertex_positions_stride: usize,
 ) c.Bounds {
     return toBounds(mo.computeClusterBounds(
+        u32,
         items(u32, indices, index_count),
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
     ));
@@ -1255,6 +1280,7 @@ export fn meshopt_partitionClusters(
     else
         null;
     return mo.partitionClusters(
+        u32,
         hooks,
         itemsMut(u32, destination, cluster_count),
         items(u32, cluster_indices, total_index_count),
@@ -1279,6 +1305,7 @@ export fn meshopt_optimizeOverdraw(
     threshold: f32,
 ) void {
     mo.optimizeOverdraw(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -1296,6 +1323,7 @@ export fn meshopt_optimizeVertexFetch(
     vertex_size: usize,
 ) usize {
     return mo.optimizeVertexFetch(
+        u32,
         hooks,
         bytesMut(destination, vertex_count * vertex_size),
         itemsMut(u32, indices, index_count),
@@ -1311,6 +1339,7 @@ export fn meshopt_optimizeVertexFetchRemap(
     vertex_count: usize,
 ) usize {
     return mo.optimizeVertexFetchRemap(
+        u32,
         itemsMut(u32, destination, vertex_count),
         items(u32, indices, index_count),
         vertex_count,
@@ -1326,6 +1355,7 @@ export fn meshopt_analyzeVertexCache(
     primgroup_size: u32,
 ) c.VertexCacheStatistics {
     const stats = mo.analyzeVertexCache(
+        u32,
         hooks,
         items(u32, indices, index_count),
         vertex_count,
@@ -1348,6 +1378,7 @@ export fn meshopt_analyzeVertexFetch(
     vertex_size: usize,
 ) c.VertexFetchStatistics {
     const stats = mo.analyzeVertexFetch(
+        u32,
         hooks,
         items(u32, indices, index_count),
         vertex_count,
@@ -1364,6 +1395,7 @@ export fn meshopt_analyzeOverdraw(
     vertex_positions_stride: usize,
 ) c.OverdrawStatistics {
     const stats = mo.analyzeOverdraw(
+        u32,
         hooks,
         items(u32, indices, index_count),
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
@@ -1383,6 +1415,7 @@ export fn meshopt_analyzeCoverage(
     vertex_positions_stride: usize,
 ) c.CoverageStatistics {
     const stats = mo.analyzeCoverage(
+        u32,
         hooks,
         items(u32, indices, index_count),
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
@@ -1398,6 +1431,7 @@ export fn meshopt_stripify(
     restart_index: u32,
 ) usize {
     return mo.stripify(
+        u32,
         hooks,
         itemsMut(u32, destination, mo.stripifyBound(index_count)),
         items(u32, indices, index_count),
@@ -1418,6 +1452,7 @@ export fn meshopt_unstripify(
 ) usize {
     const bound = if (index_count < 3) 0 else (index_count - 2) * 3;
     return mo.unstripify(
+        u32,
         itemsMut(u32, destination, bound),
         items(u32, indices, index_count),
         restart_index,
@@ -1450,6 +1485,7 @@ export fn meshopt_spatialSortTriangles(
     vertex_positions_stride: usize,
 ) void {
     mo.spatialSortTriangles(
+        u32,
         hooks,
         itemsMut(u32, destination, index_count),
         items(u32, indices, index_count),
@@ -1489,6 +1525,7 @@ export fn meshopt_remesh(
 ) usize {
     const out: ?[]f32 = if (destination) |d| d[0 .. max_triangle_count * 9] else null;
     return mo.remesh(
+        u32,
         hooks,
         out,
         items(u32, indices, index_count),
@@ -1517,6 +1554,7 @@ export fn meshopt_generateTangents(
 ) void {
     assert(indices != null or index_count == vertex_count);
     mo.generateTangents(
+        u32,
         hooks,
         itemsMut(f32, result, index_count * 4),
         optionalIndices(indices, index_count),
@@ -1539,6 +1577,7 @@ export fn meshopt_generateNormals(
 ) void {
     assert(indices != null or index_count == vertex_count);
     mo.generateNormals(
+        u32,
         hooks,
         itemsMut(f32, result, index_count * 3),
         optionalIndices(indices, index_count),

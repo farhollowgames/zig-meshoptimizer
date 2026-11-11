@@ -68,6 +68,16 @@ const Timing = struct {
     }
 };
 
+/// `value`, known only at run time. The original is a shared library, whose
+/// functions never see the benchmark's constants; the port compiles with
+/// the benchmark, so every constant its calls take goes through here, or
+/// LLVM would specialize the port's functions on the benchmark's sizes,
+/// strides and options.
+fn runtime(comptime T: type, value: T) T {
+    var copy = value;
+    return @as(*volatile T, &copy).*;
+}
+
 const Bench = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -80,6 +90,9 @@ const Bench = struct {
     fn run(self: *Bench, name: []const u8, case: anytype) void {
         if (self.filter) |filter| if (std.mem.indexOf(u8, name, filter) == null) return;
 
+        // The case's fields as memory the compiler cannot see into, so the
+        // calls take them as run-time values, as `runtime` gives constants.
+        std.mem.doNotOptimizeAway(case);
         // Taking turns spreads drift in clock speed and cache state over both.
         _ = self.time(case, "original");
         _ = self.time(case, "port");
@@ -415,11 +428,12 @@ const RemapCase = struct {
     fn port(self: *RemapCase) void {
         const bytes = std.mem.sliceAsBytes(self.vertices);
         _ = mo.generateVertexRemap(
+            u32,
             self.gpa,
             self.remap,
             null,
             bytes,
-            @sizeOf(Vertex),
+            runtime(usize, @sizeOf(Vertex)),
         ) catch unreachable;
     }
 };
@@ -479,11 +493,12 @@ const ShadowCase = struct {
     fn port(self: *ShadowCase) void {
         const stream: mo.Stream = .{
             .data = std.mem.sliceAsBytes(self.vertices),
-            .size = 12,
-            .stride = @sizeOf(Vertex),
+            .size = runtime(usize, 12),
+            .stride = runtime(usize, @sizeOf(Vertex)),
         };
         const done = if (self.multi)
             mo.generateShadowIndexBufferMulti(
+                u32,
                 self.gpa,
                 self.destination,
                 self.indices,
@@ -492,6 +507,7 @@ const ShadowCase = struct {
             )
         else
             mo.generateShadowIndexBuffer(
+                u32,
                 self.gpa,
                 self.destination,
                 self.indices,
@@ -541,6 +557,7 @@ const ProvokingCase = struct {
 
     fn port(self: *ProvokingCase) void {
         _ = mo.generateProvokingIndexBuffer(
+            u32,
             self.gpa,
             self.destination,
             self.reorder,
@@ -572,7 +589,7 @@ const Indexed = struct {
 
     fn positions(self: Indexed) mo.VertexFloats {
         const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(self.vertices));
-        return .init(floats, @sizeOf(Vertex) / @sizeOf(f32));
+        return .init(floats, runtime(usize, @sizeOf(Vertex) / @sizeOf(f32)));
     }
 
     fn positionsPtr(self: Indexed) [*]const f32 {
@@ -612,7 +629,15 @@ const OverdrawCase = struct {
 
     fn port(self: *OverdrawCase) void {
         const m = self.mesh;
-        mo.optimizeOverdraw(self.gpa, self.destination, m.indices, m.positions(), 1.05) catch
+        const threshold = runtime(f32, 1.05);
+        mo.optimizeOverdraw(
+            u32,
+            self.gpa,
+            self.destination,
+            m.indices,
+            m.positions(),
+            threshold,
+        ) catch
             unreachable;
     }
 };
@@ -654,11 +679,12 @@ const FetchCase = struct {
 
     fn port(self: *FetchCase) void {
         _ = mo.optimizeVertexFetch(
+            u32,
             self.gpa,
             std.mem.sliceAsBytes(self.destination),
             self.indices,
             std.mem.sliceAsBytes(self.mesh.vertices),
-            @sizeOf(Vertex),
+            runtime(usize, @sizeOf(Vertex)),
         ) catch unreachable;
     }
 };
@@ -693,7 +719,8 @@ const StripCase = struct {
 
     fn port(self: *StripCase) void {
         const m = self.mesh;
-        _ = mo.stripify(self.gpa, self.destination, m.indices, m.vertices.len, 0) catch
+        const restart = runtime(u32, 0);
+        _ = mo.stripify(u32, self.gpa, self.destination, m.indices, m.vertices.len, restart) catch
             unreachable;
     }
 };
@@ -729,7 +756,7 @@ const SortTrianglesCase = struct {
 
     fn port(self: *SortTrianglesCase) void {
         const m = self.mesh;
-        mo.spatialSortTriangles(self.gpa, self.destination, m.indices, m.positions()) catch
+        mo.spatialSortTriangles(u32, self.gpa, self.destination, m.indices, m.positions()) catch
             unreachable;
     }
 };
@@ -764,7 +791,7 @@ const ClusterPointsCase = struct {
 
     fn port(self: *ClusterPointsCase) void {
         const m = self.mesh;
-        mo.spatialClusterPoints(self.gpa, self.destination, m.positions(), 64) catch
+        mo.spatialClusterPoints(self.gpa, self.destination, m.positions(), runtime(usize, 64)) catch
             unreachable;
     }
 };
@@ -792,8 +819,15 @@ const CacheStatsCase = struct {
 
     fn port(self: *CacheStatsCase) void {
         const m = self.mesh;
-        const stats = mo.analyzeVertexCache(self.gpa, m.indices, m.vertices.len, 16, 32, 32) catch
-            unreachable;
+        const stats = mo.analyzeVertexCache(
+            u32,
+            self.gpa,
+            m.indices,
+            m.vertices.len,
+            runtime(u32, 16),
+            runtime(u32, 32),
+            runtime(u32, 32),
+        ) catch unreachable;
         std.mem.doNotOptimizeAway(stats);
     }
 };
@@ -832,11 +866,11 @@ const OverdrawStatsCase = struct {
     fn port(self: *OverdrawStatsCase) void {
         const m = self.mesh;
         if (self.coverage) {
-            std.mem.doNotOptimizeAway(mo.analyzeCoverage(self.gpa, m.indices, m.positions()) catch
-                unreachable);
+            const stats = mo.analyzeCoverage(u32, self.gpa, m.indices, m.positions());
+            std.mem.doNotOptimizeAway(stats catch unreachable);
         } else {
-            std.mem.doNotOptimizeAway(mo.analyzeOverdraw(self.gpa, m.indices, m.positions()) catch
-                unreachable);
+            const stats = mo.analyzeOverdraw(u32, self.gpa, m.indices, m.positions());
+            std.mem.doNotOptimizeAway(stats catch unreachable);
         }
     }
 };
@@ -924,6 +958,9 @@ const QuantizeCase = struct {
     }
 
     fn port(self: *QuantizeCase) void {
+        const bits = runtime(u5, 10);
+        const min_exp = runtime(i32, -20);
+        const max_bits = runtime(u5, 16);
         switch (self.kind) {
             .quantizeHalf => for (self.values, self.halves) |v, *h| {
                 h.* = mo.quantizeHalf(v);
@@ -932,16 +969,16 @@ const QuantizeCase = struct {
                 f.* = mo.dequantizeHalf(h);
             },
             .quantizeFloat => for (self.values, self.floats) |v, *f| {
-                f.* = mo.quantizeFloat(v, 10);
+                f.* = mo.quantizeFloat(v, bits);
             },
             .quantizeUnorm => for (self.values, self.ints) |v, *i| {
-                i.* = @bitCast(mo.quantizeUnorm(v, 10));
+                i.* = @bitCast(mo.quantizeUnorm(v, bits));
             },
             .quantizeSnorm => for (self.values, self.ints) |v, *i| {
-                i.* = mo.quantizeSnorm(v, 10);
+                i.* = mo.quantizeSnorm(v, bits);
             },
             .computePositionExponent => for (self.boxes, self.exponents) |box, *e| {
-                e.* = mo.computePositionExponent(box[0], box[1], -20, 16);
+                e.* = mo.computePositionExponent(box[0], box[1], min_exp, max_bits);
             },
         }
     }
@@ -992,7 +1029,7 @@ const RemapMultiCase = struct {
     fn port(self: *RemapMultiCase) usize {
         const v = self.vertices;
         const streams = soupStreams(v);
-        return mo.generateVertexRemapMulti(self.gpa, self.remap, null, v.len, &streams) catch
+        return mo.generateVertexRemapMulti(u32, self.gpa, self.remap, null, v.len, &streams) catch
             unreachable;
     }
 };
@@ -1031,7 +1068,8 @@ const RemapCustomCase = struct {
 
     fn port(self: *RemapCustomCase) usize {
         const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(self.vertices));
-        const positions: mo.VertexFloats = .init(floats, @sizeOf(Vertex) / @sizeOf(f32));
+        const stride = runtime(usize, @sizeOf(Vertex) / @sizeOf(f32));
+        const positions: mo.VertexFloats = .init(floats, stride);
         return mo.generateVertexRemapCustom(self.gpa, self.remap, null, positions, {}, null) catch
             unreachable;
     }
@@ -1079,7 +1117,7 @@ const RemapVerticesCase = struct {
             self.gpa,
             std.mem.sliceAsBytes(self.destination),
             std.mem.sliceAsBytes(self.vertices),
-            @sizeOf(Vertex),
+            runtime(usize, @sizeOf(Vertex)),
             self.remap,
         ) catch unreachable;
     }
@@ -1103,7 +1141,7 @@ const RemapIndicesCase = struct {
     }
 
     fn port(self: *RemapIndicesCase) void {
-        mo.remapIndexBuffer(self.destination, null, self.remap);
+        mo.remapIndexBuffer(u32, self.destination, null, self.remap);
     }
 };
 
@@ -1162,11 +1200,12 @@ const FilterCase = struct {
     fn port(self: *FilterCase) usize {
         const stream: mo.Stream = .{
             .data = std.mem.sliceAsBytes(self.vertices),
-            .size = 12,
-            .stride = @sizeOf(Vertex),
+            .size = runtime(usize, 12),
+            .stride = runtime(usize, @sizeOf(Vertex)),
         };
         const count = if (self.multi)
             mo.filterIndexBufferMulti(
+                u32,
                 self.gpa,
                 self.destination,
                 self.indices,
@@ -1175,6 +1214,7 @@ const FilterCase = struct {
             )
         else
             mo.filterIndexBuffer(
+                u32,
                 self.gpa,
                 self.destination,
                 self.indices,
@@ -1237,7 +1277,8 @@ const FetchStatsCase = struct {
 
     fn port(self: *FetchStatsCase) mo.VertexFetchStatistics {
         const m = self.mesh;
-        return mo.analyzeVertexFetch(self.gpa, m.indices, m.vertices.len, @sizeOf(Vertex)) catch
+        const vertex_size = runtime(usize, @sizeOf(Vertex));
+        return mo.analyzeVertexFetch(u32, self.gpa, m.indices, m.vertices.len, vertex_size) catch
             unreachable;
     }
 };
@@ -1266,7 +1307,7 @@ const FetchRemapCase = struct {
 
     fn port(self: *FetchRemapCase) usize {
         const m = self.mesh;
-        return mo.optimizeVertexFetchRemap(self.destination, m.indices, m.vertices.len);
+        return mo.optimizeVertexFetchRemap(u32, self.destination, m.indices, m.vertices.len);
     }
 };
 
@@ -1297,7 +1338,7 @@ const UnstripCase = struct {
     }
 
     fn port(self: *UnstripCase) usize {
-        return mo.unstripify(self.destination, self.strip, 0);
+        return mo.unstripify(u32, self.destination, self.strip, runtime(u32, 0));
     }
 };
 
@@ -1381,12 +1422,14 @@ const PatchCase = struct {
         const m = self.mesh;
         const done = switch (self.kind) {
             .adjacency => mo.generateAdjacencyIndexBuffer(
+                u32,
                 self.gpa,
                 self.destination[0 .. m.indices.len * 2],
                 m.indices,
                 m.positions(),
             ),
             .tessellation => mo.generateTessellationIndexBuffer(
+                u32,
                 self.gpa,
                 self.destination,
                 m.indices,
@@ -1399,7 +1442,7 @@ const PatchCase = struct {
 
 /// Every vertex's floats, positions first.
 fn positionsOf(vertices: []const Vertex) mo.VertexFloats {
-    const stride = @sizeOf(Vertex) / @sizeOf(f32);
+    const stride = runtime(usize, @sizeOf(Vertex) / @sizeOf(f32));
     const floats: [*]const f32 = @ptrCast(vertices.ptr);
     return .init(floats[0 .. vertices.len * stride], stride);
 }
@@ -1440,9 +1483,9 @@ const VertexCacheCase = struct {
         const i = self.mesh.indices;
         const n = self.mesh.vertices.len;
         const done = switch (self.kind) {
-            .default => mo.optimizeVertexCache(self.gpa, d, i, n),
-            .strip => mo.optimizeVertexCacheStrip(self.gpa, d, i, n),
-            .fifo => mo.optimizeVertexCacheFifo(self.gpa, d, i, n, cache_size),
+            .default => mo.optimizeVertexCache(u32, self.gpa, d, i, n),
+            .strip => mo.optimizeVertexCacheStrip(u32, self.gpa, d, i, n),
+            .fifo => mo.optimizeVertexCacheFifo(u32, self.gpa, d, i, n, runtime(u32, cache_size)),
         };
         done catch unreachable;
         std.mem.doNotOptimizeAway(self.destination);
@@ -1552,50 +1595,54 @@ const MeshletsCase = struct {
         const positions = positionsOf(self.mesh.vertices);
         self.count = switch (self.kind) {
             .standard => mo.buildMeshlets(
+                u32,
                 self.gpa,
                 self.meshlets,
                 self.vertices,
                 self.triangles,
                 i,
                 positions,
-                max_vertices,
-                max_triangles,
-                0,
+                runtime(usize, max_vertices),
+                runtime(usize, max_triangles),
+                runtime(f32, 0),
             ),
             .scan => mo.buildMeshletsScan(
+                u32,
                 self.gpa,
                 self.meshlets,
                 self.vertices,
                 self.triangles,
                 i,
                 self.mesh.vertices.len,
-                max_vertices,
-                max_triangles,
+                runtime(usize, max_vertices),
+                runtime(usize, max_triangles),
             ),
             .flex => mo.buildMeshletsFlex(
+                u32,
                 self.gpa,
                 self.meshlets,
                 self.vertices,
                 self.triangles,
                 i,
                 positions,
-                max_vertices,
-                min_triangles,
-                max_triangles,
-                cone_weight,
-                split_factor,
+                runtime(usize, max_vertices),
+                runtime(usize, min_triangles),
+                runtime(usize, max_triangles),
+                runtime(f32, cone_weight),
+                runtime(f32, split_factor),
             ),
             .spatial => mo.buildMeshletsSpatial(
+                u32,
                 self.gpa,
                 self.meshlets,
                 self.vertices,
                 self.triangles,
                 i,
                 positions,
-                max_vertices,
-                min_triangles,
-                max_triangles,
-                fill_weight,
+                runtime(usize, max_vertices),
+                runtime(usize, min_triangles),
+                runtime(usize, max_triangles),
+                runtime(f32, fill_weight),
             ),
         } catch unreachable;
         self.keep();
@@ -1735,7 +1782,7 @@ const ClusterBoundsCase = struct {
         var start: usize = 0;
         for (self.clusters.counts) |n| {
             const indices = self.clusters.indices[start..][0..n];
-            std.mem.doNotOptimizeAway(mo.computeClusterBounds(indices, positions));
+            std.mem.doNotOptimizeAway(mo.computeClusterBounds(u32, indices, positions));
             start += n;
         }
     }
@@ -1799,7 +1846,7 @@ const SphereBoundsCase = struct {
     }
 
     fn port(self: *SphereBoundsCase) void {
-        const radii: ?mo.VertexFloats = if (self.radii) |r| .init(r, 1) else null;
+        const radii: ?mo.VertexFloats = if (self.radii) |r| .init(r, runtime(usize, 1)) else null;
         const bounds = mo.computeSphereBounds(positionsOf(self.mesh.vertices), radii);
         std.mem.doNotOptimizeAway(bounds);
     }
@@ -1833,13 +1880,14 @@ const PartitionCase = struct {
 
     fn port(self: *PartitionCase) void {
         const partitions = mo.partitionClusters(
+            u32,
             self.gpa,
             self.destination,
             self.clusters.indices,
             self.clusters.counts,
             positionsOf(self.vertices),
             self.vertices.len,
-            target,
+            runtime(usize, target),
         ) catch unreachable;
         std.mem.doNotOptimizeAway(partitions);
         std.mem.doNotOptimizeAway(self.destination);
@@ -1885,7 +1933,7 @@ const IndexCodecCase = struct {
 
         // Calls, not inlined, as the original's are.
         fn port(self: *Encode) void {
-            const args = .{ self.buffer, self.indices, mo.IndexVersion.default };
+            const args = .{ u32, self.buffer, self.indices, runtime(mo.IndexVersion, .default) };
             for (0..self.rounds) |_| {
                 const size = if (self.sequence)
                     @call(.never_inline, mo.encodeIndexSequence, args)
@@ -2475,72 +2523,78 @@ const SimplifyCase = struct {
     fn portCall(self: *SimplifyCase) !usize {
         const m = self.mesh;
         const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(m.vertices));
-        const view: mo.VertexFloats = .init(floats, stride / @sizeOf(f32));
-        const attribute_view: mo.VertexFloats = .init(floats[3..], stride / @sizeOf(f32));
+        const stride_floats = runtime(usize, stride / @sizeOf(f32));
+        const view: mo.VertexFloats = .init(floats, stride_floats);
+        const attribute_view: mo.VertexFloats = .init(floats[3..], stride_floats);
         var result_error: f32 = 0;
         defer std.mem.doNotOptimizeAway(result_error);
         return switch (self.kind) {
             .simplify => mo.simplify(
+                u32,
                 self.gpa,
                 self.destination,
                 m.indices,
                 view,
                 self.targetIndexCount(),
-                target_error,
-                .{},
+                runtime(f32, target_error),
+                runtime(mo.SimplifyOptions, .{}),
                 &result_error,
             ),
             .simplifyWithAttributes => mo.simplifyWithAttributes(
+                u32,
                 self.gpa,
                 self.destination,
                 m.indices,
                 view,
                 attribute_view,
-                &weights,
+                runtime([]const f32, &weights),
                 null,
                 self.targetIndexCount(),
-                target_error,
-                .{},
+                runtime(f32, target_error),
+                runtime(mo.SimplifyOptions, .{}),
                 &result_error,
             ),
             .simplifyWithUpdate => update: {
                 const copy = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(self.vertices));
                 break :update mo.simplifyWithUpdate(
+                    u32,
                     self.gpa,
                     self.indices,
-                    .init(copy, stride / @sizeOf(f32)),
-                    .init(copy[3..], stride / @sizeOf(f32)),
-                    &weights,
+                    .init(copy, runtime(usize, stride / @sizeOf(f32))),
+                    .init(copy[3..], runtime(usize, stride / @sizeOf(f32))),
+                    runtime([]const f32, &weights),
                     null,
                     self.targetIndexCount(),
-                    target_error,
-                    .{},
+                    runtime(f32, target_error),
+                    runtime(mo.SimplifyOptions, .{}),
                     &result_error,
                 );
             },
             .simplifySloppy => mo.simplifySloppy(
+                u32,
                 self.gpa,
                 self.destination,
                 m.indices,
                 view,
                 null,
                 self.targetIndexCount(),
-                std.math.floatMax(f32),
+                runtime(f32, std.math.floatMax(f32)),
                 &result_error,
             ),
             .simplifyPrune => mo.simplifyPrune(
+                u32,
                 self.gpa,
                 self.destination,
                 m.indices,
                 view,
-                target_error,
+                runtime(f32, target_error),
             ),
             .simplifyPoints => mo.simplifyPoints(
                 self.gpa,
                 self.destination[0 .. m.vertices.len / 10],
                 view,
                 attribute_view,
-                1,
+                runtime(f32, 1),
                 m.vertices.len / 10,
             ),
         };
@@ -2768,10 +2822,11 @@ const RemeshCase = struct {
 
     fn port(self: *RemeshCase) void {
         const count = mo.remesh(
+            u32,
             self.gpa,
             self.destination,
             self.mesh.indices,
-            .init(floatsOf(self.mesh), vertex_floats),
+            .init(floatsOf(self.mesh), runtime(usize, vertex_floats)),
             self.resolution,
             @fromBackingInt(self.options),
         ) catch unreachable;
@@ -2846,12 +2901,13 @@ const TangentsCase = struct {
     fn port(self: *TangentsCase) void {
         const floats = floatsOf(self.mesh);
         mo.generateTangents(
+            u32,
             self.gpa,
             self.result,
             self.mesh.indices,
-            .init(floats, vertex_floats),
-            .init(floats[3..], vertex_floats),
-            .init(floats[6..], vertex_floats),
+            .init(floats, runtime(usize, vertex_floats)),
+            .init(floats[3..], runtime(usize, vertex_floats)),
+            .init(floats[6..], runtime(usize, vertex_floats)),
             @fromBackingInt(self.options),
         ) catch unreachable;
         std.mem.doNotOptimizeAway(self.result[0]);
@@ -2902,11 +2958,12 @@ const NormalsCase = struct {
 
     fn port(self: *NormalsCase) void {
         mo.generateNormals(
+            u32,
             self.gpa,
             self.result,
             self.mesh.indices,
-            .init(floatsOf(self.mesh), vertex_floats),
-            crease_angle,
+            .init(floatsOf(self.mesh), runtime(usize, vertex_floats)),
+            runtime(f32, crease_angle),
             self.smoothing,
         ) catch unreachable;
         std.mem.doNotOptimizeAway(self.result[0]);
@@ -3024,11 +3081,11 @@ const MeasureCase = struct {
             self.sources,
             self.omm_indices,
             self.mesh.indices,
-            .init(floatsOf(self.mesh)[6..], vertex_floats),
-            texture_size,
-            texture_size,
-            max_level,
-            target_edge,
+            .init(floatsOf(self.mesh)[6..], runtime(usize, vertex_floats)),
+            runtime(u32, texture_size),
+            runtime(u32, texture_size),
+            runtime(u8, max_level),
+            runtime(f32, target_edge),
         ) catch unreachable;
         std.mem.doNotOptimizeAway(self.count);
     }
@@ -3131,10 +3188,10 @@ const RasterizeCase = struct {
         const format: mo.OpacityMapFormat = @fromBackingInt(self.states);
         const texture: mo.AlphaTexture = .{
             .data = self.texture,
-            .stride = 1,
-            .pitch = texture_size,
-            .width = texture_size,
-            .height = texture_size,
+            .stride = runtime(usize, 1),
+            .pitch = runtime(usize, texture_size),
+            .width = runtime(u32, texture_size),
+            .height = runtime(u32, texture_size),
         };
         for (self.levels, self.offsets, self.uvs) |level, offset, corners| {
             const size = mo.opacityMapEntrySize(level, format);
@@ -3159,7 +3216,7 @@ const lod_protect_mask: u32 = (1 << 3) | (1 << 4);
 
 fn lodMesh(mesh: meshes.Mesh) clod.Mesh {
     const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(mesh.vertices));
-    const stride = @sizeOf(Vertex) / @sizeOf(f32);
+    const stride = runtime(usize, @sizeOf(Vertex) / @sizeOf(f32));
     return .{
         .indices = mesh.indices,
         .positions = .init(floats, stride),
@@ -3322,7 +3379,7 @@ const HierarchyCase = struct {
                 self.gpa,
                 self.nodes,
                 self.groups,
-                node_width,
+                runtime(usize, node_width),
                 self.level_count,
             ) catch unreachable;
             std.mem.doNotOptimizeAway(self.count);

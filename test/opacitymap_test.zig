@@ -6,6 +6,7 @@
 //! logarithm the levels come from, on every ratio measuring takes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
@@ -741,13 +742,31 @@ test "opacityMapCompact matches the original on fuzzed entries" {
 }
 
 test "the level logarithm matches the system libm on every ratio from 1" {
-    var bits: u32 = 0x3f800000;
     // Up to infinity.
-    while (bits <= 0x7f800000) : (bits += 1) {
-        const x: f32 = @bitCast(bits);
+    try expectSameLog2f(0x3f800000, 0x7f800000, 1);
+}
+
+test "the logarithm matches the system libm on every float" {
+    // Every float in the optimized modes; every 7th in Debug, where the
+    // whole sweep takes minutes.
+    const step = if (builtin.mode == .debug) 7 else 1;
+    try expectSameLog2f(0, 0x3f7fffff, step);
+    try expectSameLog2f(0x7f800001, std.math.maxInt(u32), step);
+}
+
+/// Compares the port's logarithm with the system libm's on the float bits
+/// from `first` to `last`, `step` apart.
+fn expectSameLog2f(first: u32, last: u32, step: u32) !void {
+    var bits: u64 = first;
+    while (bits <= last) : (bits += step) {
+        const x: f32 = @bitCast(@as(u32, @intCast(bits)));
         const want: u32 = @bitCast(c.reference_log2f(x));
         const got: u32 = @bitCast(mo.opacitymap.log2fForTest(x));
-        if (want != got) {
+        // A NaN result is any NaN: the libm returns the input NaN, quieted,
+        // or makes a new one, as the port does.
+        if (want != got and !(std.math.isNan(@as(f32, @bitCast(want))) and
+            std.math.isNan(@as(f32, @bitCast(got)))))
+        {
             std.debug.print(
                 "log2f(0x{x:0>8}): libm 0x{x:0>8}, port 0x{x:0>8}\n",
                 .{ bits, want, got },
