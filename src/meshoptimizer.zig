@@ -45,6 +45,11 @@ pub const remesher = @import("remesher.zig");
 pub const RemeshOptions = remesher.RemeshOptions;
 pub const remesh = remesher.remesh;
 
+pub const tangentspace = @import("tangentspace.zig");
+pub const TangentOptions = tangentspace.TangentOptions;
+pub const generateTangents = tangentspace.generateTangents;
+pub const generateNormals = tangentspace.generateNormals;
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");

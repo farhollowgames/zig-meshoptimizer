@@ -40,6 +40,7 @@ const ported = [_]Module{
     .quantization,
     .indexgenerator,
     .remesher,
+    .tangentspace,
 };
 
 fn needs(modules: []const Module) !void {

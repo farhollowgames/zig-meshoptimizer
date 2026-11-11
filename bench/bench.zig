@@ -83,6 +83,7 @@ pub fn main(init: std.process.Init) !void {
 
     const pirate = try indexedSoup(arena, soup);
     try benchRemesher(&bench, arena, &pirate, &big);
+    try benchTangentSpace(&bench, arena, &pirate, &big);
 
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
@@ -337,5 +338,131 @@ const RemeshCase = struct {
             @fromBackingInt(self.options),
         ) catch unreachable;
         std.mem.doNotOptimizeAway(count);
+    }
+};
+
+// --------------------------------------------------------
+// Tangent space
+// --------------------------------------------------------
+
+fn benchTangentSpace(
+    bench: *Bench,
+    arena: std.mem.Allocator,
+    pirate: *const meshes.Mesh,
+    big: *const meshes.Mesh,
+) !void {
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 1M", big } }) |named| {
+        inline for (.{ .{ "", 0 }, .{ " compatible", 1 }, .{ " zero fallback", 2 } }) |mode| {
+            var tangents_case: TangentsCase = try .init(arena, bench.gpa, named[1], mode[1]);
+            bench.run("generateTangents" ++ mode[0] ++ " " ++ named[0], &tangents_case);
+        }
+        inline for (.{ .{ "", 0.0 }, .{ " smooth 1.5", 1.5 } }) |mode| {
+            var normals_case: NormalsCase = try .init(arena, bench.gpa, named[1], mode[1]);
+            bench.run("generateNormals" ++ mode[0] ++ " " ++ named[0], &normals_case);
+        }
+    }
+}
+
+const TangentsCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: *const meshes.Mesh,
+    options: u32,
+    result: []f32,
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: *const meshes.Mesh,
+        options: u32,
+    ) !TangentsCase {
+        return .{
+            .gpa = gpa,
+            .mesh = mesh,
+            .options = options,
+            .result = try arena.alloc(f32, mesh.indices.len * 4),
+        };
+    }
+
+    fn original(self: *TangentsCase) void {
+        const m = self.mesh;
+        c.meshopt_generateTangents(
+            self.result.ptr,
+            m.indices.ptr,
+            m.indices.len,
+            floatsOf(m).ptr,
+            m.vertices.len,
+            @sizeOf(Vertex),
+            floatsOf(m)[3..].ptr,
+            @sizeOf(Vertex),
+            floatsOf(m)[6..].ptr,
+            @sizeOf(Vertex),
+            self.options,
+        );
+        std.mem.doNotOptimizeAway(self.result[0]);
+    }
+
+    fn port(self: *TangentsCase) void {
+        const floats = floatsOf(self.mesh);
+        mo.generateTangents(
+            self.gpa,
+            self.result,
+            self.mesh.indices,
+            .init(floats, vertex_floats),
+            .init(floats[3..], vertex_floats),
+            .init(floats[6..], vertex_floats),
+            @fromBackingInt(self.options),
+        ) catch unreachable;
+        std.mem.doNotOptimizeAway(self.result[0]);
+    }
+};
+
+const NormalsCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: *const meshes.Mesh,
+    smoothing: f32,
+    result: []f32,
+
+    /// The crease angle the original's demo uses: 1 radian, about 60 degrees.
+    const crease_angle = 1.0;
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: *const meshes.Mesh,
+        smoothing: f32,
+    ) !NormalsCase {
+        return .{
+            .gpa = gpa,
+            .mesh = mesh,
+            .smoothing = smoothing,
+            .result = try arena.alloc(f32, mesh.indices.len * 3),
+        };
+    }
+
+    fn original(self: *NormalsCase) void {
+        const m = self.mesh;
+        c.meshopt_generateNormals(
+            self.result.ptr,
+            m.indices.ptr,
+            m.indices.len,
+            floatsOf(m).ptr,
+            m.vertices.len,
+            @sizeOf(Vertex),
+            crease_angle,
+            self.smoothing,
+        );
+        std.mem.doNotOptimizeAway(self.result[0]);
+    }
+
+    fn port(self: *NormalsCase) void {
+        mo.generateNormals(
+            self.gpa,
+            self.result,
+            self.mesh.indices,
+            .init(floatsOf(self.mesh), vertex_floats),
+            crease_angle,
+            self.smoothing,
+        ) catch unreachable;
+        std.mem.doNotOptimizeAway(self.result[0]);
     }
 };

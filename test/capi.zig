@@ -925,6 +925,56 @@ export fn meshopt_remesh(
     ) catch oom();
 }
 
+// --------------------------------------------------------
+// Tangent space
+// --------------------------------------------------------
+
+export fn meshopt_generateTangents(
+    result: ?[*]f32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_normals: ?[*]const f32,
+    vertex_normals_stride: usize,
+    vertex_uvs: ?[*]const f32,
+    vertex_uvs_stride: usize,
+    options: u32,
+) void {
+    assert(indices != null or index_count == vertex_count);
+    mo.generateTangents(
+        hooks,
+        itemsMut(f32, result, index_count * 4),
+        optionalIndices(indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        floats(vertex_normals, vertex_count, vertex_normals_stride, 3),
+        floats(vertex_uvs, vertex_count, vertex_uvs_stride, 2),
+        @fromBackingInt(options),
+    ) catch oom();
+}
+
+export fn meshopt_generateNormals(
+    result: ?[*]f32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    crease_angle: f32,
+    smoothing: f32,
+) void {
+    assert(indices != null or index_count == vertex_count);
+    mo.generateNormals(
+        hooks,
+        itemsMut(f32, result, index_count * 3),
+        optionalIndices(indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        crease_angle,
+        smoothing,
+    ) catch oom();
+}
+
 export fn meshopt_opacityMapMeasure(
     _: ?[*]u8,
     _: ?[*]u32,
@@ -973,33 +1023,4 @@ export fn meshopt_opacityMapCompact(
     _: c_int,
 ) usize {
     pending("meshopt_opacityMapCompact");
-}
-
-export fn meshopt_generateTangents(
-    _: ?[*]f32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: u32,
-) void {
-    pending("meshopt_generateTangents");
-}
-
-export fn meshopt_generateNormals(
-    _: ?[*]f32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: f32,
-    _: f32,
-) void {
-    pending("meshopt_generateNormals");
 }

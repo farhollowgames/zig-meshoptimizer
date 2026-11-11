@@ -7,4 +7,5 @@ comptime {
     _ = @import("quantization_test.zig");
     _ = @import("indexgenerator_test.zig");
     _ = @import("remesher_test.zig");
+    _ = @import("tangentspace_test.zig");
 }

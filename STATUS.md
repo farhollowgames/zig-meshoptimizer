@@ -34,7 +34,8 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | simplifier.cpp | `simplify`, `simplifyWithAttributes`, `simplifyWithUpdate`, `simplifySloppy`, `simplifyPrune`, `simplifyPoints`, `simplifyScale`, every option and vertex lock flag | not started |
 | partition.cpp | `partitionClusters` | not started |
 | opacitymap.cpp | `opacityMapMeasure`, `opacityMapRasterize`, `opacityMapEntrySize`, `opacityMapCompact` | not started |
-| tangentspace.cpp | `generateTangents`, `generateNormals` | not started |
+| tangentspace.cpp | `generateTangents`; options `TangentCompatible` (`compatible`), `TangentZeroFallback` (`zero_fallback`) | benchmarked |
+| tangentspace.cpp | `generateNormals`; crease angles 0 to pi, smoothing 0 to any (passes capped at 10) | benchmarked |
 | remesher.cpp | `remesh` (resolutions 4 to 256; no destination: the bound; a destination: the exact count, cut off at its capacity) | benchmarked |
 | remesher.cpp | options `RemeshShell` (`shell`), `RemeshSolve` (`solve`) | benchmarked |
 | remesher.cpp | the original's hidden internal debug bit 30 (`internal_debug`, not in meshoptimizer.h) | oracle-tested |

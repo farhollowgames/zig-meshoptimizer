@@ -665,3 +665,8 @@ pub extern fn meshopt_computePositionExponent(
 /// meshoptimizer.h's inline C++ quantizers, exported by test/reference.cpp.
 pub extern fn reference_quantizeUnorm(v: f32, N: c_int) c_int;
 pub extern fn reference_quantizeSnorm(v: f32, N: c_int) c_int;
+
+/// The system libm's cosf and log2f, which the original calls, from
+/// test/reference.cpp.
+pub extern fn reference_cosf(x: f32) f32;
+pub extern fn reference_log2f(x: f32) f32;
