@@ -7,6 +7,7 @@ const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
 const common = @import("common.zig");
+const fuzzed = @import("fuzzed_meshes.zig");
 
 const gpa = common.gpa;
 const Vertex = common.Vertex;
@@ -76,34 +77,46 @@ const limits = [_][2]usize{
     .{ 3, 1 },
 };
 
+/// Every level against the original; then the port again on the same
+/// input, which must give the same.
 fn checkOptimize(vertices: []const u32, triangles: []const u8) !void {
     var want_vertices: [256]u32 = undefined;
     var got_vertices: [256]u32 = undefined;
+    var again_vertices: [256]u32 = undefined;
     var want_triangles: [512 * 3]u8 = undefined;
     var got_triangles: [512 * 3]u8 = undefined;
+    var again_triangles: [512 * 3]u8 = undefined;
     const n = vertices.len;
     const t = triangles.len;
 
     for (0..10) |level| {
         @memcpy(want_vertices[0..n], vertices);
         @memcpy(got_vertices[0..n], vertices);
+        @memcpy(again_vertices[0..n], vertices);
         @memcpy(want_triangles[0..t], triangles);
         @memcpy(got_triangles[0..t], triangles);
+        @memcpy(again_triangles[0..t], triangles);
         if (level == 0) {
             c.meshopt_optimizeMeshlet(&want_vertices, &want_triangles, t / 3, n);
             mo.optimizeMeshlet(got_vertices[0..n], got_triangles[0..t]);
+            mo.optimizeMeshlet(again_vertices[0..n], again_triangles[0..t]);
         } else {
             const l: c_int = @intCast(level);
             c.meshopt_optimizeMeshletLevel(&want_vertices, n, &want_triangles, t / 3, l);
             mo.optimizeMeshletLevel(got_vertices[0..n], got_triangles[0..t], @intCast(level));
+            mo.optimizeMeshletLevel(again_vertices[0..n], again_triangles[0..t], @intCast(level));
         }
         try common.expectSame(u32, "optimized vertices", want_vertices[0..n], got_vertices[0..n]);
         try common.expectSame(u8, "optimized triangles", want_triangles[0..t], got_triangles[0..t]);
+        try common.expectSame(u32, "a second run", got_vertices[0..n], again_vertices[0..n]);
+        try common.expectSame(u8, "a second run", got_triangles[0..t], again_triangles[0..t]);
     }
 }
 
-fn expectSameBounds(what: []const u8, want: c.Bounds, got: mo.Bounds) !void {
+/// `got` and `again` are the port's two runs.
+fn expectSameBounds(what: []const u8, want: c.Bounds, got: mo.Bounds, again: mo.Bounds) !void {
     try common.expectSame(u8, what, std.mem.asBytes(&want), std.mem.asBytes(&got));
+    try common.expectSame(u8, "a second run", std.mem.asBytes(&got), std.mem.asBytes(&again));
 }
 
 fn checkClusterBounds(indices: []const u32, positions: mo.VertexFloats, count: usize) !void {
@@ -114,14 +127,18 @@ fn checkClusterBounds(indices: []const u32, positions: mo.VertexFloats, count: u
         count,
         positions.stride * @sizeOf(f32),
     );
-    try expectSameBounds("computeClusterBounds", want, mo.computeClusterBounds(indices, positions));
+    const got = mo.computeClusterBounds(indices, positions);
+    const again = mo.computeClusterBounds(indices, positions);
+    try expectSameBounds("computeClusterBounds", want, got, again);
 }
 
 fn checkExtract(indices: []const u32) !void {
     var want_vertices: [256]u32 = @splat(0xcdcdcdcd);
     var got_vertices: [256]u32 = @splat(0xcdcdcdcd);
-    var want_triangles: [512 * 3]u8 = @splat(0xcd);
-    var got_triangles: [512 * 3]u8 = @splat(0xcd);
+    var again_vertices: [256]u32 = @splat(0x55555555);
+    var want_triangles: [512 * 3]u8 = @splat(fuzzed.first_fill);
+    var got_triangles: [512 * 3]u8 = @splat(fuzzed.first_fill);
+    var again_triangles: [512 * 3]u8 = @splat(fuzzed.second_fill);
     const want = c.meshopt_extractMeshletIndices(
         &want_vertices,
         &want_triangles,
@@ -132,6 +149,15 @@ fn checkExtract(indices: []const u32) !void {
     try common.expectSameValue(usize, "extractMeshletIndices", want, got);
     try common.expectSame(u32, "extracted vertices", &want_vertices, &got_vertices);
     try common.expectSame(u8, "extracted triangles", &want_triangles, &got_triangles);
+
+    const again = mo.extractMeshletIndices(&again_vertices, &again_triangles, indices);
+    try common.expectSameValue(usize, "a second run", got, again);
+    try fuzzed.expectRerunSame(
+        "extracted vertices",
+        std.mem.asBytes(&got_vertices),
+        std.mem.asBytes(&again_vertices),
+    );
+    try fuzzed.expectRerunSame("extracted triangles", &got_triangles, &again_triangles);
 }
 
 fn checkMeshlets(mesh: meshes.Mesh) !void {
@@ -155,7 +181,8 @@ fn checkMeshlets(mesh: meshes.Mesh) !void {
                 @sizeOf(Vertex),
             );
             const got = mo.computeMeshletBounds(vertices, triangles, positions);
-            try expectSameBounds("computeMeshletBounds", want, got);
+            const again = mo.computeMeshletBounds(vertices, triangles, positions);
+            try expectSameBounds("computeMeshletBounds", want, got, again);
 
             // The meshlet's mesh indices, as a cluster.
             var indices: [512 * 3]u32 = undefined;
@@ -248,7 +275,10 @@ fn checkSphere(
     else
         .init(floats[0 .. (count - 1) * stride + 3], stride);
     const radius_view: ?mo.VertexFloats = if (radii) |r|
-        .init(r[0 .. (count - 1) * radius_stride + 1], radius_stride)
+        if (count == 0)
+            .{ .data = &.{}, .stride = radius_stride }
+        else
+            .init(r[0 .. (count - 1) * radius_stride + 1], radius_stride)
     else
         null;
     const want = c.meshopt_computeSphereBounds(
@@ -259,7 +289,8 @@ fn checkSphere(
         if (radii != null) radius_stride * @sizeOf(f32) else 0,
     );
     const got = mo.computeSphereBounds(positions, radius_view);
-    try expectSameBounds("computeSphereBounds", want, got);
+    const again = mo.computeSphereBounds(positions, radius_view);
+    try expectSameBounds("computeSphereBounds", want, got, again);
 }
 
 test "computeSphereBounds matches the original on every mesh" {
@@ -288,4 +319,121 @@ test "computeSphereBounds matches the original on every mesh" {
     const spheres = [_]f32{ 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 2, 1, 0, 1, 3 };
     try checkSphere(&spheres, 4, 4, null, 0);
     try checkSphere(&spheres, 4, 4, spheres[3..], 4);
+}
+
+/// A fuzzed meshlet over a fuzzed mesh's vertices: up to 256 vertices and
+/// 512 triangles of random corners, a fan around one vertex (whose valence
+/// passes the original's 8-bit counters) or a strip. Positions are finite
+/// and below 1e6, as the original's cone needs; it asserts on others.
+fn checkFuzzed(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var fuzz_mesh = try fuzzed.mesh(rng);
+    defer fuzz_mesh.deinit();
+    const pool = fuzz_mesh.mesh.vertices;
+    for (pool) |*v| {
+        for ([_]*f32{ &v.px, &v.py, &v.pz }) |x| {
+            if (!std.math.isFinite(x.*) or @abs(x.*) > 1e6) x.* = 0;
+        }
+    }
+    const positions = common.positionsOf(pool);
+
+    const vertex_count = fuzzed.size(rng, 1, 256);
+    const triangle_count = fuzzed.size(rng, 0, 512);
+    var vertices: [256]u32 = undefined;
+    for (vertices[0..vertex_count]) |*v| v.* = rng.uintLessThan(u32, @intCast(pool.len));
+    var triangles: [512 * 3]u8 = undefined;
+    const t = triangles[0 .. triangle_count * 3];
+    for (0..triangle_count) |i| {
+        const corners: [3]usize = switch (seed % 3) {
+            0 => .{
+                rng.uintLessThan(usize, vertex_count),
+                rng.uintLessThan(usize, vertex_count),
+                rng.uintLessThan(usize, vertex_count),
+            },
+            1 => .{ 0, (i + 1) % vertex_count, (i + 2) % vertex_count },
+            else => .{ i % vertex_count, (i + 1) % vertex_count, (i + 2) % vertex_count },
+        };
+        for (t[i * 3 ..][0..3], corners) |*corner, k| corner.* = @intCast(k);
+    }
+    const local = vertices[0..vertex_count];
+
+    try checkOptimize(local, t);
+
+    const want = c.meshopt_computeMeshletBounds(
+        local.ptr,
+        t.ptr,
+        triangle_count,
+        positions.data.ptr,
+        pool.len,
+        @sizeOf(Vertex),
+    );
+    const got = mo.computeMeshletBounds(local, t, positions);
+    const again = mo.computeMeshletBounds(local, t, positions);
+    try expectSameBounds("computeMeshletBounds", want, got, again);
+
+    var indices: [512 * 3]u32 = undefined;
+    for (t, indices[0..t.len]) |corner, *index| index.* = local[corner];
+    try checkClusterBounds(indices[0..t.len], positions, pool.len);
+    try checkExtract(indices[0..t.len]);
+
+    // Spheres around some of the positions, with radii apart, in the
+    // vertex's normal field, or none.
+    const floats = common.floatsOf(pool);
+    const count = fuzzed.size(rng, 0, pool.len);
+    const radii = try gpa.alloc(f32, count);
+    defer gpa.free(radii);
+    for (radii) |*r| r.* = if (rng.boolean()) 0 else rng.float(f32) * 4;
+    switch (rng.uintLessThan(u32, 3)) {
+        0 => try checkSphere(floats, common.vertex_floats, count, null, 0),
+        1 => try checkSphere(floats, common.vertex_floats, count, radii, 1),
+        else => {
+            for (pool) |*v| v.nx = @abs(v.nx);
+            try checkSphere(floats, common.vertex_floats, count, floats[3..], common.vertex_floats);
+        },
+    }
+}
+
+test "the meshlet functions match the original on fuzzed meshlets" {
+    try common.fuzz("meshletutils", 0, checkFuzzed);
+}
+
+test "the meshlet functions match the original at the largest meshlet" {
+    var prng: std.Random.DefaultPrng = .init(1);
+    const rng = prng.random();
+    var grid = try meshes.grid(gpa, 15);
+    defer grid.deinit(gpa);
+    const positions = common.positionsOf(grid.vertices);
+
+    // 256 vertices and 512 triangles: a fan around vertex 0, and random.
+    var vertices: [256]u32 = undefined;
+    for (&vertices, 0..) |*v, i| v.* = @intCast(i);
+    var triangles: [512 * 3]u8 = undefined;
+    for (0..2) |round| {
+        for (0..512) |i| {
+            const corners: [3]usize = if (round == 0)
+                .{ 0, i % 255 + 1, (i + 1) % 255 + 1 }
+            else
+                .{ rng.uintLessThan(usize, 256), rng.uintLessThan(usize, 256), i % 256 };
+            for (triangles[i * 3 ..][0..3], corners) |*corner, k| corner.* = @intCast(k);
+        }
+        try checkOptimize(&vertices, &triangles);
+
+        const want = c.meshopt_computeMeshletBounds(
+            &vertices,
+            &triangles,
+            512,
+            positions.data.ptr,
+            grid.vertices.len,
+            @sizeOf(Vertex),
+        );
+        const got = mo.computeMeshletBounds(&vertices, &triangles, positions);
+        const again = mo.computeMeshletBounds(&vertices, &triangles, positions);
+        try expectSameBounds("computeMeshletBounds", want, got, again);
+
+        var indices: [512 * 3]u32 = undefined;
+        for (triangles, &indices) |corner, *index| index.* = vertices[corner];
+        try checkClusterBounds(&indices, positions, grid.vertices.len);
+        try checkExtract(&indices);
+    }
 }

@@ -6,6 +6,7 @@ const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
 const common = @import("common.zig");
+const fuzzed = @import("fuzzed_meshes.zig");
 
 const gpa = common.gpa;
 
@@ -72,27 +73,43 @@ fn runPort(
     }
 }
 
-fn checkMesh(indices: []const u32, vertex_count: usize) !void {
+/// Each optimizer into a new buffer and in place, against the original;
+/// then the port again, which must write the same.
+fn checkMeshWith(list: []const Optimizer, indices: []const u32, vertex_count: usize) !void {
     const want = try gpa.alloc(u32, indices.len);
     defer gpa.free(want);
     const got = try gpa.alloc(u32, indices.len);
     defer gpa.free(got);
+    const again = try gpa.alloc(u32, indices.len);
+    defer gpa.free(again);
 
-    for (optimizers) |optimizer| {
+    for (list) |optimizer| {
+        const name = @tagName(optimizer);
+
         // Into a new buffer, every entry set first so unwritten ones match.
-        @memset(want, 0xcdcdcdcd);
-        @memset(got, 0xcdcdcdcd);
+        @memset(std.mem.sliceAsBytes(want), fuzzed.first_fill);
+        @memset(std.mem.sliceAsBytes(got), fuzzed.first_fill);
+        @memset(std.mem.sliceAsBytes(again), fuzzed.second_fill);
         runOriginal(optimizer, want, indices, vertex_count);
         try runPort(optimizer, got, indices, vertex_count);
-        try common.expectSame(u32, @tagName(optimizer), want, got);
+        try common.expectSame(u32, name, want, got);
+        try runPort(optimizer, again, indices, vertex_count);
+        try fuzzed.expectRerunSame(name, std.mem.sliceAsBytes(got), std.mem.sliceAsBytes(again));
 
         // In place.
         @memcpy(want, indices);
         @memcpy(got, indices);
+        @memcpy(again, indices);
         runOriginal(optimizer, want, want, vertex_count);
         try runPort(optimizer, got, got, vertex_count);
-        try common.expectSame(u32, @tagName(optimizer), want, got);
+        try common.expectSame(u32, name, want, got);
+        try runPort(optimizer, again, again, vertex_count);
+        try common.expectSame(u32, name, got, again);
     }
+}
+
+fn checkMesh(indices: []const u32, vertex_count: usize) !void {
+    return checkMeshWith(&optimizers, indices, vertex_count);
 }
 
 test "optimizeVertexCache and its variants match the original on every mesh" {
@@ -133,4 +150,33 @@ test "optimizeVertexCache matches the original on degenerate inputs" {
         fan[i * 3 ..][0..3].* = .{ 0, k + 1, k + 2 };
     }
     try checkMesh(&fan, 42);
+}
+
+/// One fuzzed mesh, each optimizer with a fuzzed cache size or score table.
+fn checkFuzzed(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var fuzz_mesh = try fuzzed.mesh(rng);
+    defer fuzz_mesh.deinit();
+
+    // Any scores that keep every live triangle's above zero, as the
+    // optimizer requires: none below zero in the cache, and above zero for
+    // every vertex with triangles left.
+    var table: mo.VertexScoreTable = undefined;
+    for (&table.cache) |*score| score.* = if (rng.boolean()) 0 else rng.float(f32) * 3;
+    for (&table.live, 0..) |*score, live| {
+        score.* = if (live == 0) 0 else 1e-3 + rng.float(f32) * 3;
+    }
+    const cache_size: u32 = if (rng.uintLessThan(u32, 16) == 0)
+        rng.intRangeAtMost(u32, 65, 100_000)
+    else
+        @intCast(fuzzed.size(rng, 3, 64));
+
+    const list = [_]Optimizer{ .default, .strip, .{ .fifo = cache_size }, .{ .table = &table } };
+    const mesh = fuzz_mesh.mesh;
+    try checkMeshWith(&list, mesh.indices, mesh.vertices.len);
+}
+
+test "optimizeVertexCache and its variants match the original on fuzzed meshes" {
+    try common.fuzz("optimizeVertexCache", 0, checkFuzzed);
 }
