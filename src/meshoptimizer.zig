@@ -10,6 +10,10 @@
 
 const std = @import("std");
 
+/// The original's version this port translates, as its
+/// `MESHOPTIMIZER_VERSION`: 1030 for 1.3.
+pub const version = 1030;
+
 pub const allocator = @import("allocator.zig");
 pub const Scratch = allocator.Scratch;
 

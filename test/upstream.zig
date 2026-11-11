@@ -694,6 +694,10 @@ pub extern fn reference_quantizeSnormArray(
     count: usize,
     N: c_int,
 ) void;
+
+/// meshoptimizer.h's `MESHOPTIMIZER_VERSION`, from test/reference.cpp.
+pub extern fn reference_version() c_int;
+
 /// The function under meshopt_simplify, meshopt_simplifyWithAttributes and
 /// meshopt_simplifyWithUpdate, with the internal option bits: simplifier.cpp
 /// defines it with C++ linkage and the header leaves it out, so

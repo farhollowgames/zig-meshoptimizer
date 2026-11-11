@@ -22,3 +22,11 @@ comptime {
     _ = @import("simplifier_test.zig");
     _ = @import("vertexfilter_test.zig");
 }
+
+const std = @import("std");
+const mo = @import("meshoptimizer");
+const c = @import("upstream");
+
+test "MESHOPTIMIZER_VERSION" {
+    try std.testing.expectEqual(c.reference_version(), mo.version);
+}
