@@ -59,8 +59,9 @@ const Texture = struct {
     heightf: f32,
 };
 
-/// Alpha at (u, v), wrapped, filtered bilinearly in fixed point.
-fn sampleTexture(texture: *const Texture, u_in: f32, v_in: f32) f32 {
+/// Alpha at (u, v), wrapped, filtered bilinearly in fixed point. Inlined:
+/// the recursion and the edge loops call it for nearly every sample.
+inline fn sampleTexture(texture: *const Texture, u_in: f32, v_in: f32) f32 {
     // Coordinates wrap; floor is expensive, so it runs only outside [0, 1]
     // (and a little).
     const u = if (@abs(u_in - 0.5) > 0.5) u_in - @floor(u_in) else u_in;
