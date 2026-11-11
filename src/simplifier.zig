@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const convert = @import("convert.zig");
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const strided = @import("strided.zig");
@@ -2238,7 +2239,35 @@ fn computeVertexIds(
     assert(grid_size >= 1 and grid_size <= 1024);
     const cell_scale: f32 = @floatFromInt(grid_size - 1);
 
-    for (vertex_ids, vertex_positions, 0..) |*id, v, i| {
+    // Eight vertices at a time: Zig leaves the loop below scalar, where
+    // clang vectorizes the original's.
+    const lanes = 8;
+    const Floats = @Vector(lanes, f32);
+    const Ids = @Vector(lanes, u32);
+    const floats: []const f32 = @ptrCast(vertex_positions);
+    var start: usize = 0;
+    while (start + lanes <= vertex_ids.len) : (start += lanes) {
+        const xyz: @Vector(3 * lanes, f32) = floats[start * 3 ..][0 .. 3 * lanes].*;
+        var cells: [3]Ids = undefined;
+        inline for (&cells, 0..) |*cell, axis| {
+            const along = @shuffle(f32, xyz, undefined, everyThird(lanes, axis));
+            const scaled = along * @as(Floats, @splat(cell_scale)) + @as(Floats, @splat(0.5));
+            cell.* = @bitCast(convert.truncateLanes(lanes, scaled));
+        }
+        var ids = (cells[0] << @splat(20)) | (cells[1] << @splat(10)) | cells[2];
+        if (vertex_lock) |locks| {
+            const flags: @Vector(lanes, u8) = @bitCast(locks[start..][0..lanes].*);
+            const lock: u8 = @bitCast(SimplifyVertexFlags{ .lock = true });
+            const lock_bit: @Vector(lanes, u8) = @splat(lock);
+            const locked = flags & lock_bit != @as(@Vector(lanes, u8), @splat(0));
+            const first: u32 = @intCast(start);
+            const own = std.simd.iota(u32, lanes) + @as(Ids, @splat(1 << 30 | first));
+            ids = @select(u32, locked, own, ids);
+        }
+        vertex_ids[start..][0..lanes].* = ids;
+    }
+
+    for (vertex_ids[start..], vertex_positions[start..], start..) |*id, v, i| {
         const xi: u32 = @bitCast(truncateToInt(v.x * cell_scale + 0.5));
         const yi: u32 = @bitCast(truncateToInt(v.y * cell_scale + 0.5));
         const zi: u32 = @bitCast(truncateToInt(v.z * cell_scale + 0.5));
@@ -2246,6 +2275,14 @@ fn computeVertexIds(
         const locked = if (vertex_lock) |locks| locks[i].lock else false;
         id.* = if (locked) 1 << 30 | @as(u32, @intCast(i)) else (xi << 20) | (yi << 10) | zi;
     }
+}
+
+/// The shuffle mask that takes lane `first`, then every third lane after
+/// it, `n` lanes in all.
+fn everyThird(comptime n: usize, comptime first: usize) [n]i32 {
+    var mask: [n]i32 = undefined;
+    for (&mask, 0..) |*m, i| m.* = @intCast(first + 3 * i);
+    return mask;
 }
 
 fn countTriangles(vertex_ids: []const u32, indices: []const u32) usize {

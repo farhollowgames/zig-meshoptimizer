@@ -89,30 +89,49 @@ fn computeBoundingSphere(
     const count = if (indices) |list| list.len else points.count();
     assert(count > 0);
 
-    // The points with the smallest and largest coordinates along each axis.
-    var pmin: [axis_count]u32 = @splat(0);
-    var pmax: [axis_count]u32 = @splat(0);
-    var tmin: [axis_count]f32 = @splat(std.math.floatMax(f32));
-    var tmax: [axis_count]f32 = @splat(-std.math.floatMax(f32));
+    // The points with the smallest and largest coordinates along each axis,
+    // one axis per lane; lanes past `axis_count` are left over.
+    const lanes = if (axis_count <= 4) 4 else 8;
+    const Floats = @Vector(lanes, f32);
+    const Points = @Vector(lanes, u32);
+    const coefficients = comptime axes: {
+        var by_coordinate: [3][lanes]f32 = @splat(@splat(0));
+        for (sphere_axes[0..axis_count], 0..) |ax, axis| {
+            for (ax, 0..) |a, coordinate| by_coordinate[coordinate][axis] = a;
+        }
+        break :axes by_coordinate;
+    };
+    const ax_x: Floats = coefficients[0];
+    const ax_y: Floats = coefficients[1];
+    const ax_z: Floats = coefficients[2];
+
+    var pmin_lanes: Points = @splat(0);
+    var pmax_lanes: Points = @splat(0);
+    var tmin: Floats = @splat(std.math.floatMax(f32));
+    var tmax: Floats = @splat(-std.math.floatMax(f32));
 
     for (0..count) |i| {
         const v: u32 = if (indices) |list| list[i] else @intCast(i);
         const p = points.vec3(v);
-        const r = radiusOf(radii, v);
+        const r: Floats = @splat(radiusOf(radii, v));
 
-        for (0..axis_count) |axis| {
-            const ax = sphere_axes[axis];
+        const tp = ax_x * @as(Floats, @splat(p[0])) + ax_y * @as(Floats, @splat(p[1])) +
+            ax_z * @as(Floats, @splat(p[2]));
+        const tpmin = tp - r;
+        const tpmax = tp + r;
 
-            const tp = ax[0] * p[0] + ax[1] * p[1] + ax[2] * p[2];
-            const tpmin = tp - r;
-            const tpmax = tp + r;
-
-            pmin[axis] = if (tpmin < tmin[axis]) v else pmin[axis];
-            pmax[axis] = if (tpmax > tmax[axis]) v else pmax[axis];
-            tmin[axis] = if (tpmin < tmin[axis]) tpmin else tmin[axis];
-            tmax[axis] = if (tpmax > tmax[axis]) tpmax else tmax[axis];
-        }
+        const lower = tpmin < tmin;
+        const higher = tpmax > tmax;
+        pmin_lanes = @select(u32, lower, @as(Points, @splat(v)), pmin_lanes);
+        pmax_lanes = @select(u32, higher, @as(Points, @splat(v)), pmax_lanes);
+        tmin = @select(f32, lower, tpmin, tmin);
+        tmax = @select(f32, higher, tpmax, tmax);
     }
+
+    const pmin_all: [lanes]u32 = pmin_lanes;
+    const pmax_all: [lanes]u32 = pmax_lanes;
+    const pmin = pmin_all[0..axis_count];
+    const pmax = pmax_all[0..axis_count];
 
     // The pair farthest apart.
     var paxis: usize = 0;
