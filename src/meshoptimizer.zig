@@ -121,6 +121,17 @@ pub const encodeVertexBufferLevel = vertexcodec.encodeVertexBufferLevel;
 pub const encodeVertexBufferBound = vertexcodec.encodeVertexBufferBound;
 pub const decodeVertexBuffer = vertexcodec.decodeVertexBuffer;
 pub const decodeVertexVersion = vertexcodec.decodeVertexVersion;
+pub const simplifier = @import("simplifier.zig");
+pub const SimplifyOptions = simplifier.SimplifyOptions;
+pub const SimplifyVertexFlags = simplifier.SimplifyVertexFlags;
+pub const simplify = simplifier.simplify;
+pub const simplifyWithAttributes = simplifier.simplifyWithAttributes;
+pub const simplifyWithUpdate = simplifier.simplifyWithUpdate;
+pub const simplifyEdge = simplifier.simplifyEdge;
+pub const simplifySloppy = simplifier.simplifySloppy;
+pub const simplifyPrune = simplifier.simplifyPrune;
+pub const simplifyPoints = simplifier.simplifyPoints;
+pub const simplifyScale = simplifier.simplifyScale;
 
 test {
     std.testing.refAllDecls(@This());

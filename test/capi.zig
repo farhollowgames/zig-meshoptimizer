@@ -364,6 +364,214 @@ export fn meshopt_computePositionExponent(
 }
 
 // --------------------------------------------------------
+// Simplifier
+// --------------------------------------------------------
+
+/// `count` vertices of `width` floats each, `stride_bytes` apart, that the
+/// callee may change.
+fn floatsMut(ptr: ?[*]f32, count: usize, stride_bytes: usize, width: usize) mo.VertexFloatsMut {
+    assert(stride_bytes % @sizeOf(f32) == 0);
+    const stride = stride_bytes / @sizeOf(f32);
+    if (count == 0) return .{ .data = &.{}, .stride = stride };
+    return .{ .data = ptr.?[0 .. (count - 1) * stride + width], .stride = stride };
+}
+
+/// The attribute view of a simplifier call; with no attributes the pointer
+/// may be null and the stride 0, and nothing is read.
+fn attributesOf(
+    ptr: ?[*]const f32,
+    count: usize,
+    stride_bytes: usize,
+    attribute_count: usize,
+) mo.VertexFloats {
+    if (attribute_count == 0) return .{ .data = &.{}, .stride = 1 };
+    return floats(ptr, count, stride_bytes, attribute_count);
+}
+
+fn attributesMutOf(
+    ptr: ?[*]f32,
+    count: usize,
+    stride_bytes: usize,
+    attribute_count: usize,
+) mo.VertexFloatsMut {
+    if (attribute_count == 0) return .{ .data = @constCast(&[_]f32{}), .stride = 1 };
+    return floatsMut(ptr, count, stride_bytes, attribute_count);
+}
+
+fn locksOf(ptr: ?[*]const u8, count: usize) ?[]const mo.SimplifyVertexFlags {
+    const p = ptr orelse return null;
+    const flags: [*]const mo.SimplifyVertexFlags = @ptrCast(p);
+    return flags[0..count];
+}
+
+/// A destination of `len` indices, which may be null when the call writes
+/// none.
+fn destinationOf(ptr: ?[*]u32, len: usize) []u32 {
+    if (ptr) |p| return p[0..len];
+    return @constCast(&[_]u32{});
+}
+
+export fn meshopt_simplify(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize {
+    return mo.simplify(
+        hooks,
+        destinationOf(destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        target_index_count,
+        target_error,
+        @bitCast(options),
+        result_error,
+    ) catch oom();
+}
+
+export fn meshopt_simplifyWithAttributes(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]const f32,
+    vertex_attributes_stride: usize,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize {
+    return mo.simplifyWithAttributes(
+        hooks,
+        destinationOf(destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        attributesOf(vertex_attributes, vertex_count, vertex_attributes_stride, attribute_count),
+        items(f32, attribute_weights, attribute_count),
+        locksOf(vertex_lock, vertex_count),
+        target_index_count,
+        target_error,
+        @bitCast(options),
+        result_error,
+    ) catch oom();
+}
+
+export fn meshopt_simplifyWithUpdate(
+    indices: ?[*]u32,
+    index_count: usize,
+    vertex_positions: ?[*]f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]f32,
+    vertex_attributes_stride: usize,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize {
+    return mo.simplifyWithUpdate(
+        hooks,
+        itemsMut(u32, indices, index_count),
+        floatsMut(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        attributesMutOf(vertex_attributes, vertex_count, vertex_attributes_stride, attribute_count),
+        items(f32, attribute_weights, attribute_count),
+        locksOf(vertex_lock, vertex_count),
+        target_index_count,
+        target_error,
+        @bitCast(options),
+        result_error,
+    ) catch oom();
+}
+
+export fn meshopt_simplifySloppy(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    result_error: ?*f32,
+) usize {
+    return mo.simplifySloppy(
+        hooks,
+        destinationOf(destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        locksOf(vertex_lock, vertex_count),
+        target_index_count,
+        target_error,
+        result_error,
+    ) catch oom();
+}
+
+export fn meshopt_simplifyPrune(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_error: f32,
+) usize {
+    return mo.simplifyPrune(
+        hooks,
+        destinationOf(destination, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        target_error,
+    ) catch oom();
+}
+
+export fn meshopt_simplifyPoints(
+    destination: ?[*]u32,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_colors: ?[*]const f32,
+    vertex_colors_stride: usize,
+    color_weight: f32,
+    target_vertex_count: usize,
+) usize {
+    const colors: ?mo.VertexFloats = if (vertex_colors != null)
+        floats(vertex_colors, vertex_count, vertex_colors_stride, 3)
+    else
+        null;
+    return mo.simplifyPoints(
+        hooks,
+        destinationOf(destination, target_vertex_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        colors,
+        color_weight,
+        target_vertex_count,
+    ) catch oom();
+}
+
+export fn meshopt_simplifyScale(
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) f32 {
+    return mo.simplifyScale(floats(vertex_positions, vertex_count, vertex_positions_stride, 3));
+}
+
+// --------------------------------------------------------
 // Vertex codec
 // --------------------------------------------------------
 
@@ -1192,104 +1400,6 @@ export fn meshopt_encodeFilterColor(
     _: ?[*]const f32,
 ) void {
     pending("meshopt_encodeFilterColor");
-}
-
-export fn meshopt_simplify(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: f32,
-    _: u32,
-    _: ?*f32,
-) usize {
-    pending("meshopt_simplify");
-}
-
-export fn meshopt_simplifyWithAttributes(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-    _: f32,
-    _: u32,
-    _: ?*f32,
-) usize {
-    pending("meshopt_simplifyWithAttributes");
-}
-
-export fn meshopt_simplifyWithUpdate(
-    _: ?[*]u32,
-    _: usize,
-    _: ?[*]f32,
-    _: usize,
-    _: usize,
-    _: ?[*]f32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-    _: f32,
-    _: u32,
-    _: ?*f32,
-) usize {
-    pending("meshopt_simplifyWithUpdate");
-}
-
-export fn meshopt_simplifySloppy(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-    _: f32,
-    _: ?*f32,
-) usize {
-    pending("meshopt_simplifySloppy");
-}
-
-export fn meshopt_simplifyPrune(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: f32,
-) usize {
-    pending("meshopt_simplifyPrune");
-}
-
-export fn meshopt_simplifyPoints(
-    _: ?[*]u32,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: f32,
-    _: usize,
-) usize {
-    pending("meshopt_simplifyPoints");
-}
-
-export fn meshopt_simplifyScale(_: ?[*]const f32, _: usize, _: usize) f32 {
-    pending("meshopt_simplifyScale");
 }
 
 export fn meshopt_opacityMapMeasure(
