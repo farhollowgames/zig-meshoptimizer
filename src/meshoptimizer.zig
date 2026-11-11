@@ -50,6 +50,14 @@ pub const TangentOptions = tangentspace.TangentOptions;
 pub const generateTangents = tangentspace.generateTangents;
 pub const generateNormals = tangentspace.generateNormals;
 
+pub const opacitymap = @import("opacitymap.zig");
+pub const OpacityMapFormat = opacitymap.OpacityMapFormat;
+pub const AlphaTexture = opacitymap.AlphaTexture;
+pub const opacityMapMeasure = opacitymap.opacityMapMeasure;
+pub const opacityMapRasterize = opacitymap.opacityMapRasterize;
+pub const opacityMapEntrySize = opacitymap.opacityMapEntrySize;
+pub const opacityMapCompact = opacitymap.opacityMapCompact;
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");

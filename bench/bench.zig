@@ -84,6 +84,7 @@ pub fn main(init: std.process.Init) !void {
     const pirate = try indexedSoup(arena, soup);
     try benchRemesher(&bench, arena, &pirate, &big);
     try benchTangentSpace(&bench, arena, &pirate, &big);
+    try benchOpacityMap(&bench, arena, &pirate, &big);
 
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
@@ -464,5 +465,235 @@ const NormalsCase = struct {
             self.smoothing,
         ) catch unreachable;
         std.mem.doNotOptimizeAway(self.result[0]);
+    }
+};
+
+// --------------------------------------------------------
+// Opacity maps
+// --------------------------------------------------------
+
+fn benchOpacityMap(
+    bench: *Bench,
+    arena: std.mem.Allocator,
+    pirate: *const meshes.Mesh,
+    big: *const meshes.Mesh,
+) !void {
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 1M", big } }) |named| {
+        var measure_case: MeasureCase = try .init(arena, bench.gpa, named[1]);
+        bench.run("opacityMapMeasure " ++ named[0], &measure_case);
+    }
+
+    // Every micromap the demo mesh needs at up to level 8, then large
+    // triangles at the deepest levels.
+    const texture = try circlesTexture(arena, texture_size);
+    var measure_case: MeasureCase = try .init(arena, bench.gpa, pirate);
+    measure_case.port();
+    inline for (.{ .{ "2-state", 2 }, .{ "4-state", 4 } }) |format| {
+        var rasterize_case: RasterizeCase = try .initMesh(
+            arena,
+            &measure_case,
+            texture,
+            format[1],
+        );
+        bench.run("opacityMapRasterize " ++ format[0] ++ " pirate", &rasterize_case);
+        inline for (.{ 10, 12 }) |level| {
+            var deep_case: RasterizeCase = try .initDeep(arena, texture, level, format[1]);
+            const case_name = std.fmt.comptimePrint(
+                "opacityMapRasterize {s} level {d}",
+                .{ format[0], level },
+            );
+            bench.run(case_name, &deep_case);
+        }
+    }
+}
+
+const texture_size = 1024;
+
+/// Rings of alpha from clear to opaque around the middle: every opacity
+/// state, at every scale the micromap levels see.
+fn circlesTexture(arena: std.mem.Allocator, size: u32) ![]u8 {
+    const texture = try arena.alloc(u8, size * size);
+    const center = @as(f32, @floatFromInt(size)) * 0.5;
+    for (0..size) |y| for (0..size) |x| {
+        const dx = @as(f32, @floatFromInt(x)) + 0.5 - center;
+        const dy = @as(f32, @floatFromInt(y)) + 0.5 - center;
+        const distance = @sqrt(dx * dx + dy * dy);
+        texture[y * size + x] = @intFromFloat(127.5 + 127.5 * @sin(distance * 0.05));
+    };
+    return texture;
+}
+
+const MeasureCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: *const meshes.Mesh,
+    levels: []u8,
+    sources: []u32,
+    omm_indices: []i32,
+    count: usize = 0,
+
+    const max_level = 8;
+    const target_edge = 2.5;
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: *const meshes.Mesh,
+    ) !MeasureCase {
+        const triangle_count = mesh.indices.len / 3;
+        return .{
+            .gpa = gpa,
+            .mesh = mesh,
+            .levels = try arena.alloc(u8, triangle_count),
+            .sources = try arena.alloc(u32, triangle_count),
+            .omm_indices = try arena.alloc(i32, triangle_count),
+        };
+    }
+
+    fn original(self: *MeasureCase) void {
+        const m = self.mesh;
+        self.count = c.meshopt_opacityMapMeasure(
+            self.levels.ptr,
+            self.sources.ptr,
+            @ptrCast(self.omm_indices.ptr),
+            m.indices.ptr,
+            m.indices.len,
+            floatsOf(m)[6..].ptr,
+            m.vertices.len,
+            @sizeOf(Vertex),
+            texture_size,
+            texture_size,
+            max_level,
+            target_edge,
+        );
+        std.mem.doNotOptimizeAway(self.count);
+    }
+
+    fn port(self: *MeasureCase) void {
+        self.count = mo.opacityMapMeasure(
+            self.gpa,
+            self.levels,
+            self.sources,
+            self.omm_indices,
+            self.mesh.indices,
+            .init(floatsOf(self.mesh)[6..], vertex_floats),
+            texture_size,
+            texture_size,
+            max_level,
+            target_edge,
+        ) catch unreachable;
+        std.mem.doNotOptimizeAway(self.count);
+    }
+};
+
+/// Micromaps rasterized one after another into one buffer: `levels[i]` at
+/// `offsets[i]`, over the triangle with texture coordinates `uvs[i]`.
+const RasterizeCase = struct {
+    texture: []const u8,
+    states: u8,
+    levels: []const u8,
+    offsets: []const usize,
+    uvs: []const [3][2]f32,
+    data: []u8,
+
+    fn initMesh(
+        arena: std.mem.Allocator,
+        measured: *const MeasureCase,
+        texture: []const u8,
+        states: u8,
+    ) !RasterizeCase {
+        const count = measured.count;
+        const levels = measured.levels[0..count];
+        const uvs = try arena.alloc([3][2]f32, count);
+        const m = measured.mesh;
+        for (uvs, measured.sources[0..count]) |*corners, source| {
+            for (corners, m.indices[source * 3 ..][0..3]) |*uv, index| {
+                uv.* = .{ m.vertices[index].tx, m.vertices[index].ty };
+            }
+        }
+        return initLayout(arena, texture, states, levels, uvs);
+    }
+
+    /// Four triangles that together cover the texture, at `level`.
+    fn initDeep(
+        arena: std.mem.Allocator,
+        texture: []const u8,
+        level: u8,
+        states: u8,
+    ) !RasterizeCase {
+        const levels = try arena.alloc(u8, 4);
+        @memset(levels, level);
+        const uvs = try arena.dupe([3][2]f32, &.{
+            .{ .{ 0, 0 }, .{ 1, 0 }, .{ 0.5, 0.5 } },
+            .{ .{ 1, 0 }, .{ 1, 1 }, .{ 0.5, 0.5 } },
+            .{ .{ 1, 1 }, .{ 0, 1 }, .{ 0.5, 0.5 } },
+            .{ .{ 0, 1 }, .{ 0, 0 }, .{ 0.5, 0.5 } },
+        });
+        return initLayout(arena, texture, states, levels, uvs);
+    }
+
+    fn initLayout(
+        arena: std.mem.Allocator,
+        texture: []const u8,
+        states: u8,
+        levels: []const u8,
+        uvs: []const [3][2]f32,
+    ) !RasterizeCase {
+        const offsets = try arena.alloc(usize, levels.len);
+        var size: usize = 0;
+        for (levels, offsets) |level, *offset| {
+            offset.* = size;
+            size += c.meshopt_opacityMapEntrySize(level, states);
+        }
+        return .{
+            .texture = texture,
+            .states = states,
+            .levels = levels,
+            .offsets = offsets,
+            .uvs = uvs,
+            .data = try arena.alloc(u8, size),
+        };
+    }
+
+    fn original(self: *RasterizeCase) void {
+        for (self.levels, self.offsets, self.uvs) |level, offset, corners| {
+            c.meshopt_opacityMapRasterize(
+                self.data[offset..].ptr,
+                level,
+                self.states,
+                &corners[0],
+                &corners[1],
+                &corners[2],
+                self.texture.ptr,
+                1,
+                texture_size,
+                texture_size,
+                texture_size,
+            );
+        }
+        std.mem.doNotOptimizeAway(self.data[0]);
+    }
+
+    fn port(self: *RasterizeCase) void {
+        const format: mo.OpacityMapFormat = @fromBackingInt(self.states);
+        const texture: mo.AlphaTexture = .{
+            .data = self.texture,
+            .stride = 1,
+            .pitch = texture_size,
+            .width = texture_size,
+            .height = texture_size,
+        };
+        for (self.levels, self.offsets, self.uvs) |level, offset, corners| {
+            const size = mo.opacityMapEntrySize(level, format);
+            mo.opacityMapRasterize(
+                self.data[offset..][0..size],
+                level,
+                format,
+                corners[0],
+                corners[1],
+                corners[2],
+                texture,
+            );
+        }
+        std.mem.doNotOptimizeAway(self.data[0]);
     }
 };

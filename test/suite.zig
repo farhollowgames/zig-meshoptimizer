@@ -41,6 +41,7 @@ const ported = [_]Module{
     .indexgenerator,
     .remesher,
     .tangentspace,
+    .opacitymap,
 };
 
 fn needs(modules: []const Module) !void {

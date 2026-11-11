@@ -8,4 +8,5 @@ comptime {
     _ = @import("indexgenerator_test.zig");
     _ = @import("remesher_test.zig");
     _ = @import("tangentspace_test.zig");
+    _ = @import("opacitymap_test.zig");
 }
