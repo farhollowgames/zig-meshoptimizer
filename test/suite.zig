@@ -54,6 +54,9 @@ const ported = [_]Module{
     .vertexcodec,
     .simplifier,
     .vertexfilter,
+    .remesher,
+    .tangentspace,
+    .opacitymap,
 };
 
 fn needs(modules: []const Module) !void {

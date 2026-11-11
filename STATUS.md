@@ -90,7 +90,14 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | simplifier.cpp | `simplifyPoints`, with and without colors | oracle-tested |
 | simplifier.cpp | `simplifyScale` | oracle-tested |
 | partition.cpp | `partitionClusters` | not started |
-| opacitymap.cpp | `opacityMapMeasure`, `opacityMapRasterize`, `opacityMapEntrySize`, `opacityMapCompact` | not started |
-| tangentspace.cpp | `generateTangents`, `generateNormals` | not started |
-| remesher.cpp | `remesh` | not started |
+| opacitymap.cpp | `opacityMapMeasure` (levels 0 to 12 from texture size, max level and target edge; micromaps shared by triangles with equal texture coordinates) | benchmarked |
+| opacitymap.cpp | `opacityMapRasterize` (levels 0 to 12; textures of 1 to 4 channels, any pitch) | oracle-tested; 1.0 to 1.16 times the original's time |
+| opacitymap.cpp | `opacityMapEntrySize` | oracle-tested |
+| opacitymap.cpp | `opacityMapCompact` (equal micromaps merged, uniform ones turned into special indices) | oracle-tested |
+| opacitymap.cpp | formats: two-state (`OpacityMapFormat.two_state`), four-state (`four_state`) | oracle-tested; rasterized as above |
+| tangentspace.cpp | `generateTangents`; options `TangentCompatible` (`compatible`), `TangentZeroFallback` (`zero_fallback`) | benchmarked |
+| tangentspace.cpp | `generateNormals`; crease angles 0 to pi, smoothing 0 to any (passes capped at 10) | benchmarked |
+| remesher.cpp | `remesh` (resolutions 4 to 256; no destination: the bound; a destination: the exact count, cut off at its capacity) | benchmarked |
+| remesher.cpp | options `RemeshShell` (`shell`), `RemeshSolve` (`solve`) | benchmarked |
+| remesher.cpp | the original's hidden internal debug bit 30 (`internal_debug`, not in meshoptimizer.h) | oracle-tested |
 | meshoptimizer.h | C++ index-type template wrappers (16-bit indices) | not started |

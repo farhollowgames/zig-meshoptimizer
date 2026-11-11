@@ -1426,95 +1426,173 @@ export fn meshopt_spatialClusterPoints(
     ) catch oom();
 }
 
-export fn meshopt_opacityMapMeasure(
-    _: ?[*]u8,
-    _: ?[*]u32,
-    _: ?[*]c_int,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: u32,
-    _: u32,
-    _: c_int,
-    _: f32,
+// --------------------------------------------------------
+// Remesher
+// --------------------------------------------------------
+
+export fn meshopt_remesh(
+    destination: ?[*]f32,
+    max_triangle_count: usize,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    resolution: c_int,
+    options: u32,
 ) usize {
-    pending("meshopt_opacityMapMeasure");
+    const out: ?[]f32 = if (destination) |d| d[0 .. max_triangle_count * 9] else null;
+    return mo.remesh(
+        hooks,
+        out,
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        @intCast(resolution),
+        @fromBackingInt(options),
+    ) catch oom();
 }
 
-export fn meshopt_opacityMapRasterize(
-    _: ?[*]u8,
-    _: c_int,
-    _: c_int,
-    _: ?[*]const f32,
-    _: ?[*]const f32,
-    _: ?[*]const f32,
-    _: ?[*]const u8,
-    _: usize,
-    _: usize,
-    _: u32,
-    _: u32,
-) void {
-    pending("meshopt_opacityMapRasterize");
-}
-
-export fn meshopt_opacityMapEntrySize(_: c_int, _: c_int) usize {
-    pending("meshopt_opacityMapEntrySize");
-}
-
-export fn meshopt_opacityMapCompact(
-    _: ?[*]u8,
-    _: usize,
-    _: ?[*]u8,
-    _: ?[*]u32,
-    _: usize,
-    _: ?[*]c_int,
-    _: usize,
-    _: c_int,
-) usize {
-    pending("meshopt_opacityMapCompact");
-}
+// --------------------------------------------------------
+// Tangent space
+// --------------------------------------------------------
 
 export fn meshopt_generateTangents(
-    _: ?[*]f32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: u32,
+    result: ?[*]f32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_normals: ?[*]const f32,
+    vertex_normals_stride: usize,
+    vertex_uvs: ?[*]const f32,
+    vertex_uvs_stride: usize,
+    options: u32,
 ) void {
-    pending("meshopt_generateTangents");
+    assert(indices != null or index_count == vertex_count);
+    mo.generateTangents(
+        hooks,
+        itemsMut(f32, result, index_count * 4),
+        optionalIndices(indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        floats(vertex_normals, vertex_count, vertex_normals_stride, 3),
+        floats(vertex_uvs, vertex_count, vertex_uvs_stride, 2),
+        @fromBackingInt(options),
+    ) catch oom();
 }
 
 export fn meshopt_generateNormals(
-    _: ?[*]f32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: f32,
-    _: f32,
+    result: ?[*]f32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    crease_angle: f32,
+    smoothing: f32,
 ) void {
-    pending("meshopt_generateNormals");
+    assert(indices != null or index_count == vertex_count);
+    mo.generateNormals(
+        hooks,
+        itemsMut(f32, result, index_count * 3),
+        optionalIndices(indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        crease_angle,
+        smoothing,
+    ) catch oom();
 }
 
-export fn meshopt_remesh(
-    _: ?[*]f32,
-    _: usize,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: u32,
+// --------------------------------------------------------
+// Opacity maps
+// --------------------------------------------------------
+
+fn opacityFormat(states: c_int) mo.OpacityMapFormat {
+    return @fromBackingInt(@as(u8, @intCast(states)));
+}
+
+export fn meshopt_opacityMapMeasure(
+    levels: ?[*]u8,
+    sources: ?[*]u32,
+    omm_indices: ?[*]c_int,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_uvs: ?[*]const f32,
+    vertex_count: usize,
+    vertex_uvs_stride: usize,
+    texture_width: u32,
+    texture_height: u32,
+    max_level: c_int,
+    target_edge: f32,
 ) usize {
-    pending("meshopt_remesh");
+    const triangle_count = index_count / 3;
+    return mo.opacityMapMeasure(
+        hooks,
+        itemsMut(u8, levels, triangle_count),
+        itemsMut(u32, sources, triangle_count),
+        itemsMut(i32, @ptrCast(omm_indices), triangle_count),
+        items(u32, indices, index_count),
+        floats(vertex_uvs, vertex_count, vertex_uvs_stride, 2),
+        texture_width,
+        texture_height,
+        @intCast(max_level),
+        target_edge,
+    ) catch oom();
+}
+
+export fn meshopt_opacityMapRasterize(
+    result: ?[*]u8,
+    level: c_int,
+    states: c_int,
+    uv0: ?[*]const f32,
+    uv1: ?[*]const f32,
+    uv2: ?[*]const f32,
+    texture_data: ?[*]const u8,
+    texture_stride: usize,
+    texture_pitch: usize,
+    texture_width: u32,
+    texture_height: u32,
+) void {
+    const format = opacityFormat(states);
+    const size = mo.opacityMapEntrySize(@intCast(level), format);
+    const last_row = (texture_height - 1) * texture_pitch;
+    const texture_size = last_row + (texture_width - 1) * texture_stride + 1;
+    mo.opacityMapRasterize(
+        itemsMut(u8, result, size),
+        @intCast(level),
+        format,
+        uv0.?[0..2].*,
+        uv1.?[0..2].*,
+        uv2.?[0..2].*,
+        .{
+            .data = items(u8, texture_data, texture_size),
+            .stride = texture_stride,
+            .pitch = texture_pitch,
+            .width = texture_width,
+            .height = texture_height,
+        },
+    );
+}
+
+export fn meshopt_opacityMapEntrySize(level: c_int, states: c_int) usize {
+    return mo.opacityMapEntrySize(@intCast(level), opacityFormat(states));
+}
+
+export fn meshopt_opacityMapCompact(
+    data: ?[*]u8,
+    data_size: usize,
+    levels: ?[*]u8,
+    offsets: ?[*]u32,
+    omm_count: usize,
+    omm_indices: ?[*]c_int,
+    triangle_count: usize,
+    states: c_int,
+) usize {
+    return mo.opacityMapCompact(
+        hooks,
+        itemsMut(u8, data, data_size),
+        itemsMut(u8, levels, omm_count),
+        itemsMut(u32, offsets, omm_count),
+        itemsMut(i32, @ptrCast(omm_indices), triangle_count),
+        opacityFormat(states),
+    ) catch oom();
 }

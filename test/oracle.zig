@@ -21,6 +21,9 @@ comptime {
     _ = @import("vertexcodec_test.zig");
     _ = @import("simplifier_test.zig");
     _ = @import("vertexfilter_test.zig");
+    _ = @import("remesher_test.zig");
+    _ = @import("tangentspace_test.zig");
+    _ = @import("opacitymap_test.zig");
 }
 
 const std = @import("std");

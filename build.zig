@@ -177,11 +177,20 @@ fn referenceLibrary(
             .link_libcpp = true,
         }),
     });
-    reference.root_module.addCSourceFiles(.{
-        .root = upstream.path("src"),
-        .files = &upstream_sources,
-        .flags = &reference_flags,
-    });
+    // The original's libm calls go to the system's libm, as in a normal
+    // build of it: in a binary Zig links, they would bind to compiler_rt's
+    // own versions, which round differently. Each source is compiled after
+    // test/libm_redirect.h, which renames them.
+    const redirected = b.addWriteFiles();
+    reference.root_module.addIncludePath(b.path("test"));
+    reference.root_module.addIncludePath(upstream.path("src"));
+    for (upstream_sources) |source| {
+        const wrapper = redirected.add(
+            b.fmt("redirected_{s}", .{source}),
+            b.fmt("#include \"libm_redirect.h\"\n#include \"{s}\"\n", .{source}),
+        );
+        reference.root_module.addCSourceFile(.{ .file = wrapper, .flags = &reference_flags });
+    }
     return reference;
 }
 
