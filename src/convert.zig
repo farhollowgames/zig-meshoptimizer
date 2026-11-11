@@ -10,7 +10,10 @@ const builtin = @import("builtin");
 pub fn truncate(v: f32) i32 {
     if (builtin.cpu.arch == .x86_64) {
         // The instruction C compilers emit, which gives the lowest `i32` for
-        // NaN and out-of-range values by itself.
+        // NaN and out-of-range values by itself: through LLVM's intrinsic,
+        // which it schedules as any other instruction, or as assembly for
+        // Zig's own backend.
+        if (builtin.zig_backend == .stage2_llvm) return @"llvm.x86.sse.cvttss2si"(.{ v, 0, 0, 0 });
         const avx = comptime std.Target.x86.featureSetHas(builtin.cpu.features, .avx);
         return asm ((if (avx) "vcvttss2si" else "cvttss2si") ++ " %[v], %[r]"
             : [r] "=r" (-> i32),
@@ -20,6 +23,8 @@ pub fn truncate(v: f32) i32 {
     if (v >= -2147483648.0 and v < 2147483648.0) return @intFromFloat(v);
     return std.math.minInt(i32);
 }
+
+extern fn @"llvm.x86.sse.cvttss2si"(@Vector(4, f32)) i32;
 
 /// `truncate` on each lane, for loops Zig leaves scalar unless they are
 /// written on vectors.

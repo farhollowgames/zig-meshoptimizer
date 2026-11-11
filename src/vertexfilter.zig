@@ -790,24 +790,46 @@ pub fn encodeFilterQuat(destination: []u8, stride: usize, bits: u5, data: []cons
     const out = std.mem.bytesAsSlice(i16, destination[0 .. count * 8]);
     const scaler = @sqrt(@as(f32, 2));
 
+    // quantizeSnorm's steps on a quaternion's four lanes at once.
+    const Quat = @Vector(4, f32);
+    const scale: Quat = @splat(@floatFromInt((@as(i32, 1) << (bits - 1)) - 1));
+    const one: Quat = @splat(1);
+    const half: Quat = @splat(0.5);
+    const top: i16 = @truncate(quantization.quantizeSnorm(1, bits) & ~@as(i32, 3));
+
     for (0..count) |i| {
-        const q = data[i * 4 ..][0..4];
-        const d = out[i * 4 ..][0..4];
+        const q: Quat = data[i * 4 ..][0..4].*;
 
         // The largest component.
+        const magnitude: [4]f32 = @abs(q);
         var qc: u2 = 0;
-        qc = if (@abs(q[1]) > @abs(q[qc])) 1 else qc;
-        qc = if (@abs(q[2]) > @abs(q[qc])) 2 else qc;
-        qc = if (@abs(q[3]) > @abs(q[qc])) 3 else qc;
+        qc = if (magnitude[1] > magnitude[qc]) 1 else qc;
+        qc = if (magnitude[2] > magnitude[qc]) 2 else qc;
+        qc = if (magnitude[3] > magnitude[qc]) 3 else qc;
 
         // The double cover of rotations lets the sign go.
-        const sign: f32 = if (q[qc] < 0) -1 else 1;
+        const largest = data[i * 4 + qc];
+        const sign: Quat = @splat(if (largest < 0) -1 else 1);
 
-        // The swizzle is always cyclic, so a rotation recovers the order.
-        d[0] = @truncate(quantization.quantizeSnorm(q[qc +% 1] * scaler * sign, bits));
-        d[1] = @truncate(quantization.quantizeSnorm(q[qc +% 2] * scaler * sign, bits));
-        d[2] = @truncate(quantization.quantizeSnorm(q[qc +% 3] * scaler * sign, bits));
-        d[3] = @truncate((quantization.quantizeSnorm(1, bits) & ~@as(i32, 3)) | qc);
+        // The swizzle is always cyclic, so a rotation recovers the order:
+        // the components after the largest, then it.
+        const rotated = switch (qc) {
+            inline else => |c| @shuffle(f32, q, undefined, [4]i32{
+                c +% 1,
+                c +% 2,
+                c +% 3,
+                c,
+            }),
+        };
+        const v = rotated * @as(Quat, @splat(scaler)) * sign;
+
+        const round = @select(f32, v >= @as(Quat, @splat(0)), half, -half);
+        var clamped = @select(f32, v >= -one, v, -one);
+        clamped = @select(f32, clamped <= one, clamped, one);
+        const quantized: @Vector(4, i32) = @intFromFloat(clamped * scale + round);
+
+        const d: [4]i16 = @as(@Vector(4, i16), @truncate(quantized));
+        out[i * 4 ..][0..4].* = .{ d[0], d[1], d[2], top | qc };
     }
 }
 
@@ -830,6 +852,29 @@ pub fn encodeFilterExp(
     assert(data.len % stride_float == 0);
     const count = data.len / stride_float;
     const out = std.mem.bytesAsSlice(u32, destination[0 .. count * stride]);
+
+    // A loop for each mode, and for vectors of up to 4 floats one for each
+    // size, so the loops over a vector's floats unroll.
+    switch (mode) {
+        inline else => |m| switch (stride_float) {
+            inline 1...4 => |n| encodeExp(m, n, out, n, bits, data),
+            else => encodeExp(m, null, out, stride_float, bits, data),
+        },
+    }
+}
+
+/// `encodeFilterExp` into `out`, one word per float, with vectors of
+/// `fixed` floats if given, else of `stride_float`.
+fn encodeExp(
+    comptime mode: EncodeExpMode,
+    comptime fixed: ?usize,
+    out: []align(1) u32,
+    stride_float_runtime: usize,
+    bits: u5,
+    data: []const f32,
+) void {
+    const stride_float = if (fixed) |n| n else stride_float_runtime;
+    const count = data.len / stride_float;
 
     var component_exp_buffer: [64]i32 = undefined;
     const component_exp = component_exp_buffer[0..stride_float];
