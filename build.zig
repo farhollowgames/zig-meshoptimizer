@@ -63,6 +63,9 @@ pub fn build(b: *std.Build) void {
         .filters = test_filters,
     });
     oracle.root_module.linkLibrary(reference);
+    // The original's SIMD files again without SIMD, under other names, so
+    // the port's scalar paths are checked against the original's.
+    oracle.root_module.linkLibrary(scalarReferenceLibrary(b, upstream, target));
     addReferenceShim(b, oracle.root_module, upstream);
     test_step.dependOn(&b.addRunArtifact(oracle).step);
 
@@ -178,6 +181,47 @@ fn referenceLibrary(
         .root = upstream.path("src"),
         .files = &upstream_sources,
         .flags = &reference_flags,
+    });
+    return reference;
+}
+
+/// The original's files with SIMD paths, which the scalar reference builds
+/// without them.
+const scalar_sources = [_][]const u8{
+    "meshletcodec.cpp",
+};
+
+/// Their functions, each renamed `scalar_<name>` so they link beside the
+/// original's.
+const scalar_flags = reference_flags ++ [_][]const u8{
+    "-DMESHOPTIMIZER_NO_SIMD",
+    "-Dmeshopt_encodeMeshlet=scalar_meshopt_encodeMeshlet",
+    "-Dmeshopt_encodeMeshletBound=scalar_meshopt_encodeMeshletBound",
+    "-Dmeshopt_decodeMeshlet=scalar_meshopt_decodeMeshlet",
+    "-Dmeshopt_decodeMeshletRaw=scalar_meshopt_decodeMeshletRaw",
+};
+
+/// The original's SIMD files built with their scalar paths, for the oracle
+/// tests of the port's scalar paths.
+fn scalarReferenceLibrary(
+    b: *std.Build,
+    upstream: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+) *std.Build.Step.Compile {
+    const reference = b.addLibrary(.{
+        .name = "meshoptimizer_scalar_reference",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .fast,
+            .link_libc = true,
+            .link_libcpp = true,
+        }),
+    });
+    reference.root_module.addCSourceFiles(.{
+        .root = upstream.path("src"),
+        .files = &scalar_sources,
+        .flags = &scalar_flags,
     });
     return reference;
 }

@@ -35,7 +35,13 @@ const Module = enum {
 };
 
 /// The modules ported so far; tests that need any other are skipped.
-const ported = [_]Module{ .allocator, .quantization, .indexgenerator };
+const ported = [_]Module{
+    .allocator,
+    .quantization,
+    .indexgenerator,
+    .indexcodec,
+    .meshletcodec,
+};
 
 fn needs(modules: []const Module) !void {
     for (modules) |m| {

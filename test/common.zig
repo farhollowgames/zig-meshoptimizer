@@ -113,3 +113,14 @@ pub fn expectSame(comptime T: type, what: []const u8, want: []const T, got: []co
 pub fn expectSameValue(comptime T: type, what: []const u8, want: T, got: T) !void {
     return expectSame(T, what, &.{want}, &.{got});
 }
+
+/// The rotation of `triangle` that sorts first: the codecs keep each
+/// triangle's winding but may rotate it.
+pub fn canonicalTriangle(comptime T: type, triangle: [3]T) [3]T {
+    const a, const b, const c_ = triangle;
+    var best = triangle;
+    for ([_][3]T{ .{ b, c_, a }, .{ c_, a, b } }) |rotated| {
+        if (std.mem.order(T, &rotated, &best) == .lt) best = rotated;
+    }
+    return best;
+}
