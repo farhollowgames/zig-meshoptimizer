@@ -335,6 +335,21 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    // The allocation cache: the simplifier on the demo mesh again, its
+    // scratch memory from one block on each side, the port's
+    // `AllocatorCache` and the original's `meshopt_setAllocatorCache`.
+    {
+        const block_size = 8 << 20;
+        var cache: mo.AllocatorCache = try .init(bench.gpa, 1, block_size);
+        defer cache.deinit();
+        var local: mo.AllocatorCache.Local = .init(&cache);
+        c.meshopt_setAllocatorCache(1, block_size);
+        // The original's allocator as it was, without a cache.
+        defer c.meshopt_setAllocatorCache(0, 0);
+        var case: SimplifyCase = try .init(arena, local.allocator(), pirate, .simplify);
+        bench.run("simplify pirate, allocator cache", &case);
+    }
+
     try vertexCodec(&bench, arena, soup);
 
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /

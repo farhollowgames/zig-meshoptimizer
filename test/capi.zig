@@ -1,8 +1,10 @@
 //! The original's C interface over the port, for its own test suite only
 //! (test/suite.zig): each `meshopt_` function turns its pointers and counts
 //! into the slices and views the port takes, and calls it. Scratch memory
-//! goes through the original's allocator hooks from its allocator.cpp, so
-//! the suite's allocation counts see every allocation the port makes.
+//! goes through the original's allocator hooks from its allocator.cpp, or
+//! through the port's `AllocatorCache` over them once the suite sets one up
+//! with `meshopt_setAllocatorCache`, so the suite's allocation counts see
+//! every allocation the port makes.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -12,6 +14,29 @@ const c = @import("upstream");
 extern fn suite_allocate(size: usize) ?[*]u8;
 extern fn suite_deallocate(ptr: ?*anyopaque) void;
 
+/// The original's allocator hooks: the callbacks `meshopt_setAllocator` set.
+const callbacks: std.mem.Allocator = .{
+    .ptr = @constCast(&{}),
+    .vtable = &.{
+        .alloc = callbackAlloc,
+        .resize = std.mem.Allocator.noResize,
+        .remap = std.mem.Allocator.noRemap,
+        .free = callbackFree,
+    },
+};
+
+fn callbackAlloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+    // The callbacks align to 16 bytes, as operator new does.
+    assert(alignment.toByteUnits() <= 16);
+    return suite_allocate(len);
+}
+
+fn callbackFree(_: *anyopaque, memory: []u8, _: std.mem.Alignment, _: usize) void {
+    suite_deallocate(memory.ptr);
+}
+
+/// What the port's scratch memory goes through: the cache the suite set up,
+/// else the callbacks.
 const hooks: std.mem.Allocator = .{
     .ptr = @constCast(&{}),
     .vtable = &.{
@@ -22,14 +47,31 @@ const hooks: std.mem.Allocator = .{
     },
 };
 
-fn hookAlloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
-    // The hooks align to 16 bytes, as operator new and the cache do.
-    assert(alignment.toByteUnits() <= 16);
-    return suite_allocate(len);
+fn hookAlloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+    return scratchAllocator().rawAlloc(len, alignment, ret_addr);
 }
 
-fn hookFree(_: *anyopaque, memory: []u8, _: std.mem.Alignment, _: usize) void {
-    suite_deallocate(memory.ptr);
+fn hookFree(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    scratchAllocator().rawFree(memory, alignment, ret_addr);
+}
+
+fn scratchAllocator() std.mem.Allocator {
+    return if (allocator_cache != null) allocator_cache_local.allocator() else callbacks;
+}
+
+/// The cache `meshopt_setAllocatorCache` set up over the callbacks, if any,
+/// and the handle of it the suite allocates through, from its one thread.
+var allocator_cache: ?mo.AllocatorCache = null;
+var allocator_cache_local: mo.AllocatorCache.Local = undefined;
+
+export fn meshopt_setAllocatorCache(block_count: usize, block_size: usize) void {
+    // Every block must be back: the suite calls this while no other
+    // meshopt_ function runs.
+    if (allocator_cache) |*cache| cache.deinit();
+    allocator_cache = null;
+    // Without memory for the blocks, the original keeps no cache.
+    allocator_cache = mo.AllocatorCache.init(callbacks, block_count, block_size) catch return;
+    allocator_cache_local = .init(&allocator_cache.?);
 }
 
 fn oom() noreturn {

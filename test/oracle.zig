@@ -20,4 +20,5 @@ comptime {
     _ = @import("meshletcodec_test.zig");
     _ = @import("vertexcodec_test.zig");
     _ = @import("simplifier_test.zig");
+    _ = @import("allocator_test.zig");
 }

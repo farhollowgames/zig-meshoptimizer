@@ -12,6 +12,7 @@ const std = @import("std");
 
 pub const allocator = @import("allocator.zig");
 pub const Scratch = allocator.Scratch;
+pub const AllocatorCache = allocator.AllocatorCache;
 
 pub const strided = @import("strided.zig");
 pub const VertexFloats = strided.VertexFloats;

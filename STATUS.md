@@ -13,7 +13,8 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | upstream file | functions | state |
 | --- | --- | --- |
 | allocator.cpp | `meshopt_setAllocator` (a `std.mem.Allocator` argument), `meshopt_Allocator` (`Scratch`) | ported |
-| allocator.cpp | `meshopt_setAllocatorCache` | not started |
+| allocator.cpp | `meshopt_setAllocatorCache` (`AllocatorCache`, an allocator the caller makes over a backing allocator and passes, with a `Local` handle per thread): up to 64 blocks, sizes rounded down to 16 bytes, the size clamp on overflow, the block a handle held last or else the lowest free one, the original's fit test and 16-byte steps, the backing allocator for what does not fit, for alignment above 16 and when every block is taken; `deinit` with every block back | benchmarked (simplify on the demo mesh through both caches, 1.00x) |
+| allocator.cpp | zero-length scratch arrays: the original passes a request of 0 bytes to its callbacks or cache, where it takes 16 bytes of the block; the port's `Scratch` asks for nothing, as `std.mem.Allocator` hands out empty slices without a call, so for inputs with an empty scratch array (empty meshes) the backing allocator can see fewer calls | differs, for the author |
 | quantization.cpp, meshoptimizer.h | `quantizeUnorm`, `quantizeSnorm`, `quantizeHalf`, `quantizeFloat`, `dequantizeHalf`, `computePositionExponent` | ported |
 | indexgenerator.cpp | `generateVertexRemap`, `generateVertexRemapMulti`, `generateVertexRemapCustom`, `remapVertexBuffer`, `remapIndexBuffer` | ported |
 | indexgenerator.cpp | `filterIndexBuffer`, `filterIndexBufferMulti`, `generateShadowIndexBuffer`, `generateShadowIndexBufferMulti`, `generatePositionRemap` | ported |

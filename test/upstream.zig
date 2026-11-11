@@ -679,6 +679,17 @@ pub extern fn meshopt_computePositionExponent(
     max_bits: c_int,
 ) c_int;
 
+pub extern fn meshopt_setAllocator(
+    allocate: *const fn (size: usize) callconv(.c) ?*anyopaque,
+    deallocate: *const fn (ptr: ?*anyopaque) callconv(.c) void,
+) void;
+pub extern fn meshopt_setAllocatorCache(block_count: usize, block_size: usize) void;
+
+/// The original's default allocator back, as the other tests expect it: the
+/// cache off, then meshoptimizer.h's default callbacks, operator new and
+/// operator delete, which only C++ can name; exported by test/reference.cpp.
+pub extern fn reference_resetAllocator() void;
+
 /// meshoptimizer.h's inline C++ quantizers, exported by test/reference.cpp.
 pub extern fn reference_quantizeUnorm(v: f32, N: c_int) c_int;
 pub extern fn reference_quantizeSnorm(v: f32, N: c_int) c_int;
