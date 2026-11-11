@@ -364,26 +364,313 @@ export fn meshopt_computePositionExponent(
 }
 
 // --------------------------------------------------------
-// Not ported yet
+// Vertex cache optimizer
 // --------------------------------------------------------
-export fn meshopt_optimizeVertexCache(_: ?[*]u32, _: ?[*]const u32, _: usize, _: usize) void {
-    pending("meshopt_optimizeVertexCache");
+
+export fn meshopt_optimizeVertexCache(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+) void {
+    mo.optimizeVertexCache(
+        hooks,
+        itemsMut(u32, destination, index_count),
+        items(u32, indices, index_count),
+        vertex_count,
+    ) catch oom();
 }
 
-export fn meshopt_optimizeVertexCacheStrip(_: ?[*]u32, _: ?[*]const u32, _: usize, _: usize) void {
-    pending("meshopt_optimizeVertexCacheStrip");
+export fn meshopt_optimizeVertexCacheStrip(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+) void {
+    mo.optimizeVertexCacheStrip(
+        hooks,
+        itemsMut(u32, destination, index_count),
+        items(u32, indices, index_count),
+        vertex_count,
+    ) catch oom();
 }
 
 export fn meshopt_optimizeVertexCacheFifo(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: usize,
-    _: u32,
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    cache_size: u32,
 ) void {
-    pending("meshopt_optimizeVertexCacheFifo");
+    mo.optimizeVertexCacheFifo(
+        hooks,
+        itemsMut(u32, destination, index_count),
+        items(u32, indices, index_count),
+        vertex_count,
+        cache_size,
+    ) catch oom();
 }
 
+// --------------------------------------------------------
+// Clusterizer
+// --------------------------------------------------------
+
+fn meshletsMut(ptr: ?[*]c.Meshlet, len: usize) []mo.Meshlet {
+    return itemsMut(mo.Meshlet, @ptrCast(ptr), len);
+}
+
+export fn meshopt_buildMeshlets(
+    meshlets: ?[*]c.Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    max_triangles: usize,
+    cone_weight: f32,
+) usize {
+    // The builders write at most index_count vertices and triangle bytes.
+    return mo.buildMeshlets(
+        hooks,
+        meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, max_triangles)),
+        itemsMut(u32, meshlet_vertices, index_count),
+        itemsMut(u8, meshlet_triangles, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        max_vertices,
+        max_triangles,
+        cone_weight,
+    ) catch oom();
+}
+
+export fn meshopt_buildMeshletsScan(
+    meshlets: ?[*]c.Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    max_vertices: usize,
+    max_triangles: usize,
+) usize {
+    return mo.buildMeshletsScan(
+        hooks,
+        meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, max_triangles)),
+        itemsMut(u32, meshlet_vertices, index_count),
+        itemsMut(u8, meshlet_triangles, index_count),
+        items(u32, indices, index_count),
+        vertex_count,
+        max_vertices,
+        max_triangles,
+    ) catch oom();
+}
+
+export fn meshopt_buildMeshletsBound(
+    index_count: usize,
+    max_vertices: usize,
+    max_triangles: usize,
+) usize {
+    return mo.buildMeshletsBound(index_count, max_vertices, max_triangles);
+}
+
+export fn meshopt_buildMeshletsFlex(
+    meshlets: ?[*]c.Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    min_triangles: usize,
+    max_triangles: usize,
+    cone_weight: f32,
+    split_factor: f32,
+) usize {
+    return mo.buildMeshletsFlex(
+        hooks,
+        meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, min_triangles)),
+        itemsMut(u32, meshlet_vertices, index_count),
+        itemsMut(u8, meshlet_triangles, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        max_vertices,
+        min_triangles,
+        max_triangles,
+        cone_weight,
+        split_factor,
+    ) catch oom();
+}
+
+export fn meshopt_buildMeshletsSpatial(
+    meshlets: ?[*]c.Meshlet,
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    max_vertices: usize,
+    min_triangles: usize,
+    max_triangles: usize,
+    fill_weight: f32,
+) usize {
+    return mo.buildMeshletsSpatial(
+        hooks,
+        meshletsMut(meshlets, mo.buildMeshletsBound(index_count, max_vertices, min_triangles)),
+        itemsMut(u32, meshlet_vertices, index_count),
+        itemsMut(u8, meshlet_triangles, index_count),
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+        max_vertices,
+        min_triangles,
+        max_triangles,
+        fill_weight,
+    ) catch oom();
+}
+
+// --------------------------------------------------------
+// Meshlet utilities
+// --------------------------------------------------------
+
+export fn meshopt_optimizeMeshlet(
+    meshlet_vertices: ?[*]u32,
+    meshlet_triangles: ?[*]u8,
+    triangle_count: usize,
+    vertex_count: usize,
+) void {
+    mo.optimizeMeshlet(
+        itemsMut(u32, meshlet_vertices, vertex_count),
+        itemsMut(u8, meshlet_triangles, triangle_count * 3),
+    );
+}
+
+export fn meshopt_optimizeMeshletLevel(
+    meshlet_vertices: ?[*]u32,
+    vertex_count: usize,
+    meshlet_triangles: ?[*]u8,
+    triangle_count: usize,
+    level: c_int,
+) void {
+    mo.optimizeMeshletLevel(
+        itemsMut(u32, meshlet_vertices, vertex_count),
+        itemsMut(u8, meshlet_triangles, triangle_count * 3),
+        @intCast(level),
+    );
+}
+
+fn toBounds(b: mo.Bounds) c.Bounds {
+    return .{
+        .center = b.center,
+        .radius = b.radius,
+        .cone_apex = b.cone_apex,
+        .cone_axis = b.cone_axis,
+        .cone_cutoff = b.cone_cutoff,
+        .cone_axis_s8 = b.cone_axis_s8,
+        .cone_cutoff_s8 = b.cone_cutoff_s8,
+    };
+}
+
+export fn meshopt_computeClusterBounds(
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) c.Bounds {
+    return toBounds(mo.computeClusterBounds(
+        items(u32, indices, index_count),
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ));
+}
+
+export fn meshopt_computeMeshletBounds(
+    meshlet_vertices: ?[*]const u32,
+    meshlet_triangles: ?[*]const u8,
+    triangle_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+) c.Bounds {
+    const triangles = items(u8, meshlet_triangles, triangle_count * 3);
+    var used: usize = 0;
+    for (triangles) |t| used = @max(used, @as(usize, t) + 1);
+    return toBounds(mo.computeMeshletBounds(
+        items(u32, meshlet_vertices, used),
+        triangles,
+        floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
+    ));
+}
+
+export fn meshopt_computeSphereBounds(
+    positions: ?[*]const f32,
+    count: usize,
+    positions_stride: usize,
+    radii: ?[*]const f32,
+    radii_stride: usize,
+) c.Bounds {
+    const radius_floats: ?mo.VertexFloats = if (radii) |r|
+        floats(r, count, radii_stride, 1)
+    else
+        null;
+    return toBounds(mo.computeSphereBounds(
+        floats(positions, count, positions_stride, 3),
+        radius_floats,
+    ));
+}
+
+export fn meshopt_extractMeshletIndices(
+    vertices: ?[*]u32,
+    triangles: ?[*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+) usize {
+    // A meshlet has at most 256 vertices.
+    return mo.extractMeshletIndices(
+        itemsMut(u32, vertices, 256),
+        itemsMut(u8, triangles, index_count),
+        items(u32, indices, index_count),
+    );
+}
+
+// --------------------------------------------------------
+// Partition
+// --------------------------------------------------------
+
+export fn meshopt_partitionClusters(
+    destination: ?[*]u32,
+    cluster_indices: ?[*]const u32,
+    total_index_count: usize,
+    cluster_index_counts: ?[*]const u32,
+    cluster_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    target_partition_size: usize,
+) usize {
+    const positions: ?mo.VertexFloats = if (vertex_positions) |p|
+        floats(p, vertex_count, vertex_positions_stride, 3)
+    else
+        null;
+    return mo.partitionClusters(
+        hooks,
+        itemsMut(u32, destination, cluster_count),
+        items(u32, cluster_indices, total_index_count),
+        items(u32, cluster_index_counts, cluster_count),
+        positions,
+        vertex_count,
+        target_partition_size,
+    ) catch oom();
+}
+
+// --------------------------------------------------------
+// Not ported yet
+// --------------------------------------------------------
 export fn meshopt_optimizeOverdraw(
     _: ?[*]u32,
     _: ?[*]const u32,
@@ -747,131 +1034,6 @@ export fn meshopt_analyzeCoverage(
     _: usize,
 ) c.CoverageStatistics {
     pending("meshopt_analyzeCoverage");
-}
-
-export fn meshopt_buildMeshlets(
-    _: ?[*]c.Meshlet,
-    _: ?[*]u32,
-    _: ?[*]u8,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: f32,
-) usize {
-    pending("meshopt_buildMeshlets");
-}
-
-export fn meshopt_buildMeshletsScan(
-    _: ?[*]c.Meshlet,
-    _: ?[*]u32,
-    _: ?[*]u8,
-    _: ?[*]const u32,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-) usize {
-    pending("meshopt_buildMeshletsScan");
-}
-
-export fn meshopt_buildMeshletsBound(_: usize, _: usize, _: usize) usize {
-    pending("meshopt_buildMeshletsBound");
-}
-
-export fn meshopt_buildMeshletsFlex(
-    _: ?[*]c.Meshlet,
-    _: ?[*]u32,
-    _: ?[*]u8,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: f32,
-    _: f32,
-) usize {
-    pending("meshopt_buildMeshletsFlex");
-}
-
-export fn meshopt_buildMeshletsSpatial(
-    _: ?[*]c.Meshlet,
-    _: ?[*]u32,
-    _: ?[*]u8,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: usize,
-    _: f32,
-) usize {
-    pending("meshopt_buildMeshletsSpatial");
-}
-
-export fn meshopt_optimizeMeshlet(_: ?[*]u32, _: ?[*]u8, _: usize, _: usize) void {
-    pending("meshopt_optimizeMeshlet");
-}
-
-export fn meshopt_optimizeMeshletLevel(_: ?[*]u32, _: usize, _: ?[*]u8, _: usize, _: c_int) void {
-    pending("meshopt_optimizeMeshletLevel");
-}
-
-export fn meshopt_computeClusterBounds(
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-) c.Bounds {
-    pending("meshopt_computeClusterBounds");
-}
-
-export fn meshopt_computeMeshletBounds(
-    _: ?[*]const u32,
-    _: ?[*]const u8,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-) c.Bounds {
-    pending("meshopt_computeMeshletBounds");
-}
-
-export fn meshopt_computeSphereBounds(
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-) c.Bounds {
-    pending("meshopt_computeSphereBounds");
-}
-
-export fn meshopt_extractMeshletIndices(_: ?[*]u32, _: ?[*]u8, _: ?[*]const u32, _: usize) usize {
-    pending("meshopt_extractMeshletIndices");
-}
-
-export fn meshopt_partitionClusters(
-    _: ?[*]u32,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const f32,
-    _: usize,
-    _: usize,
-    _: usize,
-) usize {
-    pending("meshopt_partitionClusters");
 }
 
 export fn meshopt_spatialSortRemap(_: ?[*]u32, _: ?[*]const f32, _: usize, _: usize) void {

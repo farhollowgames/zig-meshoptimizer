@@ -41,6 +41,33 @@ pub const generateAdjacencyIndexBuffer = indexgenerator.generateAdjacencyIndexBu
 pub const generateTessellationIndexBuffer = indexgenerator.generateTessellationIndexBuffer;
 pub const generateProvokingIndexBuffer = indexgenerator.generateProvokingIndexBuffer;
 
+pub const vcacheoptimizer = @import("vcacheoptimizer.zig");
+pub const VertexScoreTable = vcacheoptimizer.VertexScoreTable;
+pub const optimizeVertexCache = vcacheoptimizer.optimizeVertexCache;
+pub const optimizeVertexCacheStrip = vcacheoptimizer.optimizeVertexCacheStrip;
+pub const optimizeVertexCacheFifo = vcacheoptimizer.optimizeVertexCacheFifo;
+pub const optimizeVertexCacheTable = vcacheoptimizer.optimizeVertexCacheTable;
+
+pub const clusterizer = @import("clusterizer.zig");
+pub const Meshlet = clusterizer.Meshlet;
+pub const buildMeshletsBound = clusterizer.buildMeshletsBound;
+pub const buildMeshlets = clusterizer.buildMeshlets;
+pub const buildMeshletsScan = clusterizer.buildMeshletsScan;
+pub const buildMeshletsFlex = clusterizer.buildMeshletsFlex;
+pub const buildMeshletsSpatial = clusterizer.buildMeshletsSpatial;
+
+pub const meshletutils = @import("meshletutils.zig");
+pub const Bounds = meshletutils.Bounds;
+pub const optimizeMeshlet = meshletutils.optimizeMeshlet;
+pub const optimizeMeshletLevel = meshletutils.optimizeMeshletLevel;
+pub const computeClusterBounds = meshletutils.computeClusterBounds;
+pub const computeMeshletBounds = meshletutils.computeMeshletBounds;
+pub const computeSphereBounds = meshletutils.computeSphereBounds;
+pub const extractMeshletIndices = meshletutils.extractMeshletIndices;
+
+pub const partition = @import("partition.zig");
+pub const partitionClusters = partition.partitionClusters;
+
 test {
     std.testing.refAllDecls(@This());
 }

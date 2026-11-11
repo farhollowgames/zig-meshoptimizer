@@ -6,4 +6,8 @@
 comptime {
     _ = @import("quantization_test.zig");
     _ = @import("indexgenerator_test.zig");
+    _ = @import("vcacheoptimizer_test.zig");
+    _ = @import("clusterizer_test.zig");
+    _ = @import("meshletutils_test.zig");
+    _ = @import("partition_test.zig");
 }
