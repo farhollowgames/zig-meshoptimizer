@@ -49,6 +49,7 @@ const ported = [_]Module{
     .clusterizer,
     .meshletutils,
     .partition,
+    .vertexfilter,
 };
 
 fn needs(modules: []const Module) !void {

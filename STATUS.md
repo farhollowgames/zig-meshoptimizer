@@ -40,7 +40,18 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | vertexcodec.cpp | `encodeVertexBuffer`, `encodeVertexBufferLevel`, `encodeVertexBufferBound`, `encodeVertexVersion`, `decodeVertexBuffer` (scalar and SIMD), `decodeVertexVersion` | not started |
 | indexcodec.cpp | `encodeIndexBuffer`, `encodeIndexBufferBound`, `encodeIndexVersion`, `decodeIndexBuffer`, `decodeIndexVersion`, `encodeIndexSequence`, `encodeIndexSequenceBound`, `decodeIndexSequence` | not started |
 | meshletcodec.cpp | `encodeMeshlet`, `encodeMeshletBound`, `decodeMeshlet`, `decodeMeshletRaw` | not started |
-| vertexfilter.cpp | `encodeFilterOct`, `encodeFilterQuat`, `encodeFilterExp`, `encodeFilterColor`, `decodeFilterOct`, `decodeFilterQuat`, `decodeFilterExp`, `decodeFilterColor` (scalar and SIMD) | not started |
+| vertexfilter.cpp | `decodeFilterOct`, strides 4 and 8, with the SSE kernels (x86; 8, 16 lanes with AVX2, AVX-512) | benchmarked |
+| vertexfilter.cpp | `decodeFilterQuat`, with the SSE kernel (x86) | benchmarked |
+| vertexfilter.cpp | `decodeFilterExp`, every stride, with the SSE kernel (x86) | benchmarked |
+| vertexfilter.cpp | `decodeFilterColor`, strides 4 and 8, with the SSE kernels (x86) | benchmarked |
+| vertexfilter.cpp | each decoder without SIMD (`MESHOPTIMIZER_NO_SIMD`, other targets), every stride | oracle-tested |
+| vertexfilter.cpp | each decoder with the NEON kernels (aarch64), which compile but have not run on an aarch64 machine | ported |
+| vertexfilter.cpp | 8-bit `decodeFilterOct` and `decodeFilterColor` on Zig's own x86 backend (Debug), which cannot assemble `rsqrtps` and `rcpps`: they take the scalar path, whose bytes differ from the SSE kernels' as the original's do | oracle-tested |
+| vertexfilter.cpp | `encodeFilterOct`, strides 4 and 8, `bits` 2 to 16 | benchmarked |
+| vertexfilter.cpp | `encodeFilterQuat`, `bits` 4 to 16 | oracle-tested; 3 to 4% slower than the original |
+| vertexfilter.cpp | `encodeFilterExp`, `meshopt_EncodeExpMode` (`EncodeExpMode`) `separate`, `shared_vector`, `shared_component`, `clamped`, `bits` 1 to 24, in place (`destination` is `data`) | oracle-tested; 3 to 13% slower than the original |
+| vertexfilter.cpp | `encodeFilterColor`, strides 4 and 8, `bits` 2 to 16 | benchmarked |
+| vertexfilter.cpp | the Wasm SIMD kernels, and the NEON kernels on 32-bit ARM (those targets take the scalar path) | left out, for the author |
 | overdrawoptimizer.cpp | `optimizeOverdraw` | not started |
 | vfetchoptimizer.cpp | `optimizeVertexFetch`, `optimizeVertexFetchRemap` | not started |
 | indexanalyzer.cpp | `analyzeVertexCache`, `analyzeVertexFetch` | not started |

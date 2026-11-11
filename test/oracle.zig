@@ -16,4 +16,5 @@ comptime {
     _ = @import("clusterizer_test.zig");
     _ = @import("meshletutils_test.zig");
     _ = @import("partition_test.zig");
+    _ = @import("vertexfilter_test.zig");
 }

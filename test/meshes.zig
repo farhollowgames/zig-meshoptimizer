@@ -241,3 +241,64 @@ pub fn indexed(
     const indices = try gpa.dupe(u32, remap);
     return .{ .vertices = vertices, .indices = indices };
 }
+
+/// Each vertex's normal as 4 floats, X, Y, Z and a W of 1 or -1 (a
+/// tangent's handedness), as the octahedral filter takes them. The caller
+/// frees the floats.
+pub fn unitVectors(gpa: std.mem.Allocator, vertices: []const Vertex) ![]f32 {
+    const out = try gpa.alloc(f32, vertices.len * 4);
+    for (vertices, 0..) |v, i| {
+        const w: f32 = if (v.tx - @floor(v.tx) < 0.5) 1 else -1;
+        out[i * 4 ..][0..4].* = .{ v.nx, v.ny, v.nz, w };
+    }
+    return out;
+}
+
+/// Each vertex's tangent frame as a unit quaternion, X, Y, Z and W: the
+/// shortest rotation of +Z onto the normal, after a twist about +Z by the
+/// first texture coordinate. The caller frees the floats.
+pub fn tangentFrames(gpa: std.mem.Allocator, vertices: []const Vertex) ![]f32 {
+    const out = try gpa.alloc(f32, vertices.len * 4);
+    for (vertices, 0..) |v, i| {
+        const length = @sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+        const n: [3]f32 = if (length > 0)
+            .{ v.nx / length, v.ny / length, v.nz / length }
+        else
+            .{ 0, 0, 1 };
+
+        // The shortest arc, or a half turn about X when the normal is -Z.
+        var arc = [4]f32{ -n[1], n[0], 0, 1 + n[2] };
+        const arc_length = @sqrt(arc[0] * arc[0] + arc[1] * arc[1] + arc[3] * arc[3]);
+        arc = if (arc_length > 1e-6)
+            .{ arc[0] / arc_length, arc[1] / arc_length, 0, arc[3] / arc_length }
+        else
+            .{ 1, 0, 0, 0 };
+
+        const half = v.tx * std.math.pi;
+        const s = @sin(half);
+        const c = @cos(half);
+        out[i * 4 ..][0..4].* = .{
+            arc[0] * c + arc[1] * s,
+            arc[1] * c - arc[0] * s,
+            arc[3] * s + arc[2] * c,
+            arc[3] * c - arc[2] * s,
+        };
+    }
+    return out;
+}
+
+/// A color per vertex as RGBA floats: the normal mapped to [0, 1], and the
+/// fraction of the second texture coordinate as alpha. The caller frees the
+/// floats.
+pub fn colors(gpa: std.mem.Allocator, vertices: []const Vertex) ![]f32 {
+    const out = try gpa.alloc(f32, vertices.len * 4);
+    for (vertices, 0..) |v, i| {
+        out[i * 4 ..][0..4].* = .{
+            v.nx * 0.5 + 0.5,
+            v.ny * 0.5 + 0.5,
+            v.nz * 0.5 + 0.5,
+            v.ty - @floor(v.ty),
+        };
+    }
+    return out;
+}

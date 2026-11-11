@@ -97,6 +97,17 @@ pub const extractMeshletIndices = meshletutils.extractMeshletIndices;
 pub const partition = @import("partition.zig");
 pub const partitionClusters = partition.partitionClusters;
 
+pub const vertexfilter = @import("vertexfilter.zig");
+pub const EncodeExpMode = vertexfilter.EncodeExpMode;
+pub const decodeFilterOct = vertexfilter.decodeFilterOct;
+pub const decodeFilterQuat = vertexfilter.decodeFilterQuat;
+pub const decodeFilterExp = vertexfilter.decodeFilterExp;
+pub const decodeFilterColor = vertexfilter.decodeFilterColor;
+pub const encodeFilterOct = vertexfilter.encodeFilterOct;
+pub const encodeFilterQuat = vertexfilter.encodeFilterQuat;
+pub const encodeFilterExp = vertexfilter.encodeFilterExp;
+pub const encodeFilterColor = vertexfilter.encodeFilterColor;
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");
