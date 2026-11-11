@@ -17,3 +17,18 @@ jobs:
         run: zig fmt --check build.zig src test bench
       - name: Oracle, suite and unit tests
         run: zig build test --summary all
+
+  neon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: QEMU user mode
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+      - name: NEON paths against the original built for aarch64, under QEMU
+        run: >
+          zig build test -Dtarget=aarch64-linux-musl -fqemu
+          -Dtest-filter=vertexcodec -Dtest-filter=vertexfilter
+          -Dtest-filter=meshletcodec -Dtest-filter=clusterizer --summary all

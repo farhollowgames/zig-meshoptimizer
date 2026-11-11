@@ -9,6 +9,7 @@
 //! output of a different byte pattern, which must come out the same.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
@@ -120,7 +121,20 @@ fn expectDecoded(
 /// Decodes `stream` with the original's decoders and every decoder of the
 /// port, fails unless each of the port's matches its original, and returns
 /// the original's result.
-fn checkDecode(stream: []const u8, vertex_count: usize, vertex_size: usize) !c_int {
+/// Where a stream checked by `checkDecode` comes from.
+const Origin = enum {
+    /// The encoder's output, whole.
+    encoder,
+    /// Truncated, padded, corrupted or random bytes.
+    malformed,
+};
+
+fn checkDecode(
+    stream: []const u8,
+    vertex_count: usize,
+    vertex_size: usize,
+    origin: Origin,
+) !c_int {
     const size = vertex_count * vertex_size;
     const want = try gpa.alloc(u8, size);
     defer gpa.free(want);
@@ -155,12 +169,16 @@ fn checkDecode(stream: []const u8, vertex_count: usize, vertex_size: usize) !c_i
     try expectDecoded("decodeVertexBuffer", want_code, want, got_code, got);
 
     inline for (vc.testable_decoders) |decoder| {
+        // The NEON decoder also runs on x86, for its shuffles, but on
+        // malformed buffers it follows the original's NEON build, which
+        // differs there from its x86 build: QEMU checks it on aarch64.
+        const neon_elsewhere = decoder == .neon and builtin.cpu.arch != .aarch64;
         const name = @tagName(decoder) ++ " decoder";
         @memset(got, 0);
         const code = codeOf(vc.decodeVertexBufferWith(decoder, got, vertex_size, stream));
         if (decoder == .scalar) {
             try expectDecoded(name, want_scalar_code, want_scalar, code, got);
-        } else {
+        } else if (!neon_elsewhere or origin == .encoder) {
             try expectDecoded(name, want_code, want, code, got);
         }
 
@@ -185,7 +203,8 @@ fn checkRoundTrip(
     defer encoded.deinit();
 
     const vertex_count = vertices.len / vertex_size;
-    try std.testing.expectEqual(0, try checkDecode(encoded.stream(), vertex_count, vertex_size));
+    const code = try checkDecode(encoded.stream(), vertex_count, vertex_size, .encoder);
+    try std.testing.expectEqual(0, code);
 
     const decoded = try gpa.alloc(u8, vertices.len);
     defer gpa.free(decoded);
@@ -499,14 +518,17 @@ test "the decoders match the original on truncated and padded buffers" {
             defer encoded.deinit();
             // Every prefix, then the whole stream with extra bytes.
             for (0..encoded.size + 1) |len| {
-                const code = try checkDecode(encoded.bytes[0..len], 200, 20);
+                const origin: Origin = if (len == encoded.size) .encoder else .malformed;
+                const code = try checkDecode(encoded.bytes[0..len], 200, 20, origin);
                 try std.testing.expect((code == 0) == (len == encoded.size));
             }
             const padded = try gpa.alloc(u8, encoded.size + 40);
             defer gpa.free(padded);
             @memcpy(padded[0..encoded.size], encoded.stream());
             rng.bytes(padded[encoded.size..]);
-            for (encoded.size + 1..padded.len) |len| _ = try checkDecode(padded[0..len], 200, 20);
+            for (encoded.size + 1..padded.len) |len| {
+                _ = try checkDecode(padded[0..len], 200, 20, .malformed);
+            }
         }
     }
 
@@ -518,7 +540,8 @@ test "the decoders match the original on truncated and padded buffers" {
     const vertex_count = demo.quantized.len / 16;
     for (0..200) |_| {
         const len = rng.uintLessThan(usize, encoded.size);
-        try std.testing.expect(try checkDecode(encoded.bytes[0..len], vertex_count, 16) < 0);
+        const code = try checkDecode(encoded.bytes[0..len], vertex_count, 16, .malformed);
+        try std.testing.expect(code < 0);
     }
 }
 
@@ -555,7 +578,7 @@ test "the decoders match the original on corrupted buffers" {
                         1 => vertex_count - 1,
                         else => vertex_count,
                     };
-                    const code = try checkDecode(corrupt, count, vertex_size);
+                    const code = try checkDecode(corrupt, count, vertex_size, .malformed);
                     if (code == 0) successes += 1 else failures += 1;
                 }
             }
@@ -580,7 +603,7 @@ test "the decoders match the original on unknown channel encodings" {
         for (0..256) |value| {
             @memcpy(corrupt, encoded.stream());
             corrupt[corrupt.len - 4 + channel] = @intCast(value);
-            const code = try checkDecode(corrupt, 100, 16);
+            const code = try checkDecode(corrupt, 100, 16, .malformed);
             if (value & 3 == 3) try std.testing.expectEqual(-2, code);
         }
     }
@@ -612,7 +635,8 @@ test "the decoders match the original on fuzzed truncated and padded streams" {
             // Every stream short of the whole fails.
             for (0..8) |_| {
                 const len = rng.uintLessThan(usize, encoded.size);
-                try std.testing.expect(try checkDecode(encoded.bytes[0..len], count, size) < 0);
+                const code = try checkDecode(encoded.bytes[0..len], count, size, .malformed);
+                try std.testing.expect(code < 0);
             }
 
             // Bytes past the end.
@@ -621,7 +645,7 @@ test "the decoders match the original on fuzzed truncated and padded streams" {
             @memcpy(padded[0..encoded.size], encoded.stream());
             rng.bytes(padded[encoded.size..]);
             const len = encoded.size + rng.intRangeAtMost(usize, 1, 40);
-            _ = try checkDecode(padded[0..len], count, size);
+            _ = try checkDecode(padded[0..len], count, size, .malformed);
         }
     }.check);
 }
@@ -658,7 +682,7 @@ test "the decoders match the original on fuzzed corrupted streams" {
                 1 => input.vertex_count -| 1,
                 else => input.vertex_count,
             };
-            const code = try checkDecode(corrupt, count, input.vertex_size);
+            const code = try checkDecode(corrupt, count, input.vertex_size, .malformed);
             if (code == 0) successes += 1 else failures += 1;
         }
     };
@@ -691,7 +715,7 @@ test "the decoders match the original on fuzzed random bytes" {
                 }
                 const vertex_size = 4 * rng.intRangeAtMost(usize, 1, 16);
                 const vertex_count = rng.uintLessThan(usize, 80);
-                _ = try checkDecode(stream, vertex_count, vertex_size);
+                _ = try checkDecode(stream, vertex_count, vertex_size, .malformed);
             }
         }
     }.check);

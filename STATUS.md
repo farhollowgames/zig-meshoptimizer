@@ -5,14 +5,15 @@ of `src/meshoptimizer.h`, the functions upstream exports outside it, and
 `demo/clusterlod.h`, each with its state. States:
 
 - **not started**
-- **ported**: written and compiling, but not run against the original here
-  (code for other CPUs).
+- **ported**: written and compiling, but not run against the original
+  (none left).
 - **oracle-tested**: returns what the original returns, byte for byte and
   floats bit for bit, in `test/oracle.zig`: on the demo mesh, generated
   meshes, edge cases (empty, one element, the largest sizes, degenerate
   input) and at least 1000 seeded fuzz cases, rerun into differently filled
   outputs; decoders also on truncated, corrupted and random bytes. The
-  original's own tests for it pass in `test/suite.zig`.
+  original's own tests for it pass in `test/suite.zig`. Code for aarch64
+  runs under QEMU against the original built for aarch64 (see the README).
 - **benchmarked**: oracle-tested, and in `zig build bench` the port's median
   time is at most 1.05 of the original's on every case (the run in the
   README). Rows slower than that stay oracle-tested and give their times;
@@ -81,7 +82,7 @@ large mesh.
 | `encodeMeshletBound` | oracle-tested |
 | `decodeMeshlet`, every vertex and triangle element size, SIMD path (x86) and scalar path, every error (`MeshletDecodeError`) | benchmarked |
 | `decodeMeshletRaw`, SIMD path (x86) and scalar path | oracle-tested; 1.08 and 1.07 |
-| `decodeMeshlet` and `decodeMeshletRaw` with NEON (aarch64) | ported |
+| `decodeMeshlet` and `decodeMeshletRaw` with NEON (aarch64) | oracle-tested, under QEMU |
 
 ## Vertex codec (vertexcodec.cpp)
 
@@ -97,7 +98,7 @@ large mesh.
 | `decodeVertexBuffer`, scalar decoder | oracle-tested |
 | `decodeVertexBuffer`, SSSE3 decoder | oracle-tested |
 | `decodeVertexBuffer`, AVX-512 VBMI2 decoder (the test machine's) | oracle-tested; 1.02 to 1.06 |
-| `decodeVertexBuffer`, AArch64 NEON decoder (its shuffles checked on x86 with `pshufb` for `tbl`) | ported |
+| `decodeVertexBuffer`, AArch64 NEON decoder, under QEMU; on x86 too, with `pshufb` for `tbl`, on the encoder's streams. A malformed buffer's 2- or 4-bit group of 16 sentinels advances it 16 bytes less than the other decoders, as in the original's NEON build, so its result there can differ from theirs | oracle-tested |
 | `decodeVertexBuffer` errors: invalid header, invalid data, length mismatch (`DecodeVertexError`) | oracle-tested |
 | `decodeVertexVersion` | oracle-tested |
 
@@ -110,7 +111,7 @@ large mesh.
 | `decodeFilterExp`, every stride, SSE kernel | benchmarked |
 | `decodeFilterColor`, strides 4 and 8, SSE kernels | benchmarked |
 | each decoder's scalar path (other targets), every stride | oracle-tested |
-| each decoder's NEON kernels (aarch64) | ported |
+| each decoder's NEON kernels (aarch64) | oracle-tested, under QEMU |
 | 8-bit `decodeFilterOct` and `decodeFilterColor` in Debug builds, whose x86 backend cannot assemble `rsqrtps` and `rcpps`: the scalar path, whose bytes differ from the SSE kernels' as the original's two builds do | oracle-tested |
 | `encodeFilterOct`, strides 4 and 8, `bits` 2 to 16 | benchmarked |
 | `encodeFilterQuat`, `bits` 4 to 16 | benchmarked |
@@ -161,7 +162,7 @@ large mesh.
 | `buildMeshletsFlex`: `min_triangles` to `max_triangles`, `cone_weight`, `split_factor` | benchmarked |
 | `buildMeshletsSpatial`, `fill_weight`, with the SSE box merge (x86) | oracle-tested; 1.04 and 1.09 |
 | `buildMeshletsSpatial` without SIMD (other targets), on finite positions | oracle-tested |
-| `buildMeshletsSpatial` with the NEON box merge (aarch64) | ported |
+| `buildMeshletsSpatial` with the NEON box merge (aarch64) | oracle-tested, under QEMU |
 | limits up to `max_vertices` 256 and `max_triangles` 512; position strides from 12 to 256 bytes | oracle-tested |
 | `optimizeMeshlet` | benchmarked |
 | `optimizeMeshletLevel`, levels 0 to 9 | benchmarked |
@@ -194,7 +195,7 @@ large mesh.
 | `remesh`, resolutions 4 to 256; without a destination, the bound; with one, the exact count, cut off at its capacity | benchmarked |
 | `RemeshOptions` `shell` | benchmarked |
 | `RemeshOptions` `solve` | oracle-tested; 1.04 to 1.06 and 0.91 to 0.93 |
-| the hidden debug bit 30 (`internal_debug`, not in the header) | oracle-tested |
+| the hidden debug bit 30, not in the header: no named field, read from `reserved` as the original reads it | oracle-tested |
 
 ## Opacity micromaps (opacitymap.cpp)
 
@@ -224,7 +225,7 @@ large mesh.
 | `meshopt_setAllocator`: every function that needs memory takes a `std.mem.Allocator`; the original's suite counts its allocations through its own hooks | oracle-tested |
 | `meshopt_Allocator`: `Scratch`, the same allocations in the same order, freed newest first | oracle-tested |
 | `meshopt_setAllocatorCache`: `AllocatorCache`, an allocator the caller makes over a backing allocator and passes, with a `Local` handle per thread; up to 64 blocks, sizes rounded down to 16 bytes, the size clamp on overflow, the block a handle held last or else the lowest free one, the original's fit test and 16-byte steps, the backing allocator for what does not fit, for alignment above 16 and when every block is taken; `deinit` with every block back; the same backing calls as the original's cache | benchmarked |
-| zero-length scratch arrays (empty meshes): the original asks its callbacks or cache for 0 bytes, which its cache rounds up to 16; the port's `Scratch` asks for nothing, as `std.mem.Allocator` hands out empty slices without a call, so the backing allocator can see fewer calls | differs, for the author |
+| zero-length scratch arrays (empty meshes): the original asks its callbacks or cache for 0 bytes, which its cache rounds up to 16; the port's `Scratch` asks for nothing, as `std.mem.Allocator` hands out empty slices without a call, so the backing allocator can see fewer calls | differs (approved) |
 
 ## Cluster LOD (demo/clusterlod.h)
 
@@ -262,9 +263,9 @@ large mesh.
 | function, option or mode | state |
 | --- | --- |
 | `MESHOPTIMIZER_VERSION` (`version`) | oracle-tested |
-| the C++ templates for 16-bit and other index types, and `meshopt_IndexAdapter` | left out, for the author: the port's functions take `u32` indices (the decoders also `u16`) |
+| the C++ templates for 16-bit and other index types, and `meshopt_IndexAdapter` | left out (approved): the port's functions take `u32` indices (the decoders also `u16`) |
 
-## Left out, for the author
+## Left out, approved by the author
 
 - **Wasm SIMD and 32-bit ARM NEON paths** of the vertex codec, the vertex
   filters and the meshlet codec: those targets take the scalar paths, which
@@ -287,3 +288,49 @@ large mesh.
   the same values by a shorter dependency chain.
 - **The C++ index-type templates**, above.
 - **Cluster LOD**: `clodBuild` without an output callback (a context whose `output` returns -1 does the same); the C++ template overload for lambdas (any context with `output`); NaN, infinite or overflowing positions, on which `computeClusterBounds` asserts (the original too, with asserts on); an `attribute_protect_mask` with attribute strides of 32 floats or more, where the original shifts past 31 bits (undefined) and the port reads attributes 0 to 31.
+
+## Differences from the original, approved by the author
+
+Where the port's output or interface differs from the original's, and why.
+Everything else gives the original's bytes.
+
+Output:
+
+- **Float-to-integer conversions of NaN, infinities and values past the
+  `i32` range**, which C leaves undefined, give the original's x86 results
+  on every target: truncation toward zero, and the lowest `i32` out of
+  range (`convert.truncate`). The original built for aarch64 saturates
+  instead, so there its scalar vertex filters, its filter encoders, and
+  the other functions that convert floats give other integers on such
+  input: an alpha of 0 in `decodeFilterColor`'s scalar loop, or a mantissa
+  past 24 bits in `encodeFilterExp`, which the x86 build writes as 0 and
+  the aarch64 build clamps. The port's NEON filter kernels use the NEON
+  conversions, as the original's do. Outside those kernels, the same input
+  gives the same output on every machine.
+- **`cosf` and `log2f`** are the port's own copies of glibc's, which the
+  original calls through its C library: the original's results with
+  glibc on every target, and other C libraries' rounding nowhere.
+- **NaN results** in the tangent, normal and simplifier tests compare as
+  any NaN: where an operation's operands hold several NaNs, LLVM does not
+  fix which one it returns, in either build, so their sign and payload are
+  not compared.
+- **Zero-length scratch arrays** make no allocator call (above).
+
+Interface:
+
+- Decoders return Zig error sets (`DecodeVertexError`, `IndexDecodeError`,
+  `MeshletDecodeError`) instead of negative codes.
+- The encoders' versions are arguments (`VertexVersion`, `IndexVersion`)
+  instead of the global setters `meshopt_encodeVertexVersion` and
+  `meshopt_encodeIndexVersion`.
+- `AllocatorCache.init` returns `error.OutOfMemory` when it cannot reserve
+  its blocks; the original's cache silently runs without them.
+- The remesher's undocumented debug bit 30 has no named field in
+  `RemeshOptions`; set through `@fromBackingInt`, it acts as the
+  original's. The simplifier keeps its two internal bits as fields
+  (`internal_solve`, `internal_debug`), since `simplifyEdge`, which the
+  original exports outside its header, takes `internal_solve` to move
+  vertices.
+- Cluster LOD: border dilation writes through `Mesh.positions_mut`, an
+  optional writable view of the positions, where the original casts away
+  `const`; and the items under "Left out" above.

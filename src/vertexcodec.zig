@@ -1420,14 +1420,15 @@ const neon = struct {
         return .{ @truncate((mask2[0] *% magic) >> 56), @truncate((mask2[1] *% magic) >> 56) };
     }
 
-    /// The number of nibbles of `x` with their low bit set, 0 to 16.
+    /// The number of nibbles of `x` with their low bit set, modulo 16: the
+    /// sum lands in the top nibble, so all 16 set gives 0, as in the
+    /// original's NEON build. Encoders never write a 2- or 4-bit group of
+    /// 16 sentinels, since 8-bit values would be smaller; in a malformed
+    /// buffer this decoder then reads on 16 bytes earlier than the others,
+    /// as the original's NEON build does.
     fn countNibbleBits(x: u64) usize {
         const low: u64 = 0x1111111111111111;
-        // Adds all low bits of the nibbles into the top nibble, which holds
-        // up to 15; all 16 set wraps to 0.
-        const sum = ((x & low) *% low) >> 60;
-        const all: u64 = @intFromBool((x & low) == low);
-        return @intCast(sum | (all << 4));
+        return @intCast(((x & low) *% low) >> 60);
     }
 
     fn decode(data: []const u8, pos: usize, out: *[byte_group_size]u8, hbits: u4) usize {
@@ -1822,10 +1823,11 @@ test "the NEON move mask gives each lane's bit" {
     }
 }
 
-test "the NEON decoder counts sixteen sentinels in 2- and 4-bit groups" {
-    // Encoders never write these groups, as fewer bits would be smaller,
-    // but a malformed buffer may hold them: every decoder counts them alike.
-    try testing.expectEqual(16, neon.countNibbleBits(0x1111111111111111));
+test "the NEON decoder counts sixteen sentinels in 2- and 4-bit groups as zero" {
+    // Encoders never write these groups, as 8-bit values would be smaller,
+    // but a malformed buffer may hold them. The original's NEON build counts
+    // their sentinels modulo 16, and its other decoders count all 16.
+    try testing.expectEqual(0, neon.countNibbleBits(0x1111111111111111));
     try testing.expectEqual(15, neon.countNibbleBits(0x1111111111111110));
     try testing.expectEqual(0, neon.countNibbleBits(0xeeeeeeeeeeeeeeee));
 
@@ -1839,7 +1841,8 @@ test "the NEON decoder counts sixteen sentinels in 2- and 4-bit groups" {
             const end = groups.decode(&data, 0, &out, hbits);
             var want: [16]u8 = undefined;
             const scalar_bits: u8 = if (hbits == 1 or hbits == 6) 2 else 4;
-            const want_end = decodeBytesGroup(&data, 0, &want, scalar_bits);
+            const scalar_end = decodeBytesGroup(&data, 0, &want, scalar_bits);
+            const want_end = if (decoder == .neon) scalar_end - 16 else scalar_end;
             try testing.expectEqual(want_end, end);
             try testing.expectEqualSlices(u8, &want, &out);
         }

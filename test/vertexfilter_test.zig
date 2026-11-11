@@ -8,6 +8,7 @@
 //! the two round differently.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const mo = @import("meshoptimizer");
 const c = @import("upstream");
 const meshes = @import("meshes");
@@ -27,6 +28,26 @@ extern fn scalar_meshopt_decodeFilterColor(
 ) void;
 
 const Filter = enum { oct, quat, exp, color };
+
+/// What a test's inputs reach.
+const Inputs = enum {
+    /// Values that every float-to-integer conversion the filter makes
+    /// holds.
+    in_range,
+    /// Infinities, NaNs and values past the integer range as well. C leaves
+    /// converting those undefined; the original's builds for x86 and
+    /// aarch64 give different integers, and the port gives the x86 ones on
+    /// every target. Elsewhere than x86, these inputs check the SIMD
+    /// decoders, which follow the original's own instructions, and leave
+    /// out the scalar decoders and the encoders.
+    any,
+
+    /// Whether the port's scalar decoders and encoders compute as the
+    /// original's build for this target does on these inputs.
+    fn scalarComparable(inputs: Inputs) bool {
+        return inputs == .in_range or builtin.cpu.arch == .x86_64;
+    }
+};
 
 /// The strides each decoder takes; the exponent filter takes any multiple
 /// of 4, of which these are a sample.
@@ -71,7 +92,7 @@ fn decodersOf(filter: Filter) [2]Decoder {
 /// Decodes `input`, `stride` bytes per item, with the original and the
 /// port on each path, and fails unless both write the same bytes, and the
 /// port writes them again on a second run.
-fn checkDecode(filter: Filter, input: []const u8, stride: usize) !void {
+fn checkDecode(filter: Filter, input: []const u8, stride: usize, inputs: Inputs) !void {
     const count = input.len / stride;
     const want = try gpa.alloc(u8, input.len);
     defer gpa.free(want);
@@ -87,6 +108,7 @@ fn checkDecode(filter: Filter, input: []const u8, stride: usize) !void {
         const simd = vf.has_simd and (vf.simd_estimates or !estimates);
         const scalar = decodersOf(filter)[1];
         const original = if (path == 0 and !simd) scalar.original else decoder.original;
+        if ((path == 1 or !simd) and !inputs.scalarComparable()) continue;
 
         @memcpy(want, input);
         @memcpy(got, input);
@@ -104,10 +126,12 @@ fn checkDecode(filter: Filter, input: []const u8, stride: usize) !void {
 
 /// `checkDecode` on every prefix of `input` up to a few SIMD blocks, and on
 /// all of it: every count of whole blocks and tails.
-fn checkDecodeCounts(filter: Filter, input: []const u8, stride: usize) !void {
+fn checkDecodeCounts(filter: Filter, input: []const u8, stride: usize, inputs: Inputs) !void {
     const count = input.len / stride;
-    for (0..@min(count, 70) + 1) |n| try checkDecode(filter, input[0 .. n * stride], stride);
-    try checkDecode(filter, input, stride);
+    for (0..@min(count, 70) + 1) |n| {
+        try checkDecode(filter, input[0 .. n * stride], stride, inputs);
+    }
+    try checkDecode(filter, input, stride, inputs);
 }
 
 /// Encodes `data` with the original and the port, into outputs filled
@@ -119,6 +143,7 @@ fn checkEncode(
     stride: usize,
     bits: u5,
     mode: mo.EncodeExpMode,
+    inputs: Inputs,
 ) ![]u8 {
     const floats_per_item = if (filter == .exp) stride / 4 else 4;
     const count = data.len / floats_per_item;
@@ -158,13 +183,15 @@ fn checkEncode(
             mo.encodeFilterColor(again, stride, bits, data);
         },
     }
-    common.expectSame(u8, @tagName(filter), want, got) catch |err| {
-        std.debug.print("  stride {d}, bits {d}, mode {t}\n", .{ stride, bits, mode });
-        return err;
-    };
+    if (inputs.scalarComparable()) {
+        common.expectSame(u8, @tagName(filter), want, got) catch |err| {
+            std.debug.print("  stride {d}, bits {d}, mode {t}\n", .{ stride, bits, mode });
+            return err;
+        };
+    }
     try common.expectSame(u8, "a second encode", got, again);
 
-    try checkDecode(filter, want, stride);
+    try checkDecode(filter, want, stride, inputs);
     return want;
 }
 
@@ -188,6 +215,7 @@ fn checkAll(
     frames: []const f32,
     colors: []const f32,
     floats: []const f32,
+    inputs: Inputs,
 ) !void {
     for ([_]Filter{ .oct, .quat, .color }) |filter| {
         const data = switch (filter) {
@@ -198,9 +226,10 @@ fn checkAll(
         for (stridesOf(filter)) |stride| {
             const range = bitsOf(filter, stride);
             for (range[0]..range[1] + 1) |bits| {
-                const encoded = try checkEncode(filter, data, stride, @intCast(bits), .separate);
+                const encoded =
+                    try checkEncode(filter, data, stride, @intCast(bits), .separate, inputs);
                 defer gpa.free(encoded);
-                if (bits == range[1]) try checkDecodeCounts(filter, encoded, stride);
+                if (bits == range[1]) try checkDecodeCounts(filter, encoded, stride, inputs);
             }
         }
     }
@@ -211,9 +240,11 @@ fn checkAll(
         const data = floats[0 .. floats.len / per_item * per_item];
         for (1..25) |bits| {
             for (modes) |mode| {
-                const encoded = try checkEncode(.exp, data, stride, @intCast(bits), mode);
+                const encoded = try checkEncode(.exp, data, stride, @intCast(bits), mode, inputs);
                 defer gpa.free(encoded);
-                if (bits == 24 and mode == .separate) try checkDecodeCounts(.exp, encoded, stride);
+                if (bits == 24 and mode == .separate) {
+                    try checkDecodeCounts(.exp, encoded, stride, inputs);
+                }
             }
         }
     }
@@ -238,7 +269,7 @@ fn checkMesh(vertices: []const meshes.Vertex) !void {
     defer gpa.free(frames);
     const colors = try meshes.colors(gpa, vertices);
     defer gpa.free(colors);
-    try checkAll(vectors, frames, colors, common.floatsOf(vertices));
+    try checkAll(vectors, frames, colors, common.floatsOf(vertices), .in_range);
 }
 
 /// Floats at the edges: zeros, ones, infinities, NaNs, denormals, the
@@ -282,7 +313,7 @@ test "the encoders match the original on special floats" {
         const w = special_floats[(data.items.len / 4) % special_floats.len];
         try data.appendSlice(gpa, &.{ x, y, z, w });
     };
-    try checkAll(data.items, data.items, data.items, data.items);
+    try checkAll(data.items, data.items, data.items, data.items, .any);
 }
 
 test "encodeFilterExp matches the original at 24 bits around every power of two" {
@@ -304,7 +335,7 @@ test "encodeFilterExp matches the original at 24 bits around every power of two"
         const per_item = stride / 4;
         const floats = data.items[0 .. data.items.len / per_item * per_item];
         for ([_]u5{ 22, 23, 24 }) |bits| {
-            for (modes) |mode| gpa.free(try checkEncode(.exp, floats, stride, bits, mode));
+            for (modes) |mode| gpa.free(try checkEncode(.exp, floats, stride, bits, mode, .any));
         }
     }
 }
@@ -359,7 +390,7 @@ test "the decoders match the original on special components" {
     for ([_]Filter{ .oct, .quat, .color, .exp }) |filter| {
         for (stridesOf(filter)) |stride| {
             const bytes = if (stride == 4 and filter != .exp) narrow.items else wide_bytes;
-            try checkDecode(filter, bytes[0 .. bytes.len / stride * stride], stride);
+            try checkDecode(filter, bytes[0 .. bytes.len / stride * stride], stride, .any);
         }
     }
 }
@@ -375,7 +406,8 @@ test "decodeFilterExp matches the original on every exponent" {
     };
     for (0..256) |e| for (mantissas) |m| try words.append(gpa, @as(u32, @intCast(e)) << 24 | m);
     try words.appendSlice(gpa, &special_words);
-    try checkDecodeCounts(.exp, std.mem.sliceAsBytes(words.items), 4);
+    // The exponent filter decodes with integer steps alone.
+    try checkDecodeCounts(.exp, std.mem.sliceAsBytes(words.items), 4, .in_range);
 }
 
 test "decodeFilterOct matches the original on every 8-bit vector" {
@@ -387,7 +419,7 @@ test "decodeFilterOct matches the original on every 8-bit vector" {
         const w: u32 = (v *% 0x9e3779b1) >> 24;
         std.mem.writeInt(u32, bytes[i * 4 ..][0..4], v | w << 24, .little);
     }
-    try checkDecode(.oct, bytes, 4);
+    try checkDecode(.oct, bytes, 4, .in_range);
 }
 
 test "decodeFilterColor matches the original on every 8-bit Y, Co and Cg" {
@@ -400,14 +432,14 @@ test "decodeFilterColor matches the original on every 8-bit Y, Co and Cg" {
         const a: u32 = (v *% 0x9e3779b1) >> 24;
         std.mem.writeInt(u32, bytes[i * 4 ..][0..4], v | a << 24, .little);
     }
-    try checkDecode(.color, bytes, 4);
+    try checkDecode(.color, bytes, 4, .any);
 
     for (0..1 << 24) |i| {
         const v: u32 = @intCast(i);
         const rest: u32 = (v *% 0x9e3779b1) >> 8;
         std.mem.writeInt(u32, bytes[i * 4 ..][0..4], (v & 0xff) << 24 | rest, .little);
     }
-    try checkDecode(.color, bytes, 4);
+    try checkDecode(.color, bytes, 4, .any);
 }
 
 /// 32-bit words that make special floats and special components.
@@ -440,7 +472,7 @@ fn fuzzDecode(seed: u64) !void {
     const count = rng.uintLessThan(usize, 100);
     const bytes = try fuzzBytes(rng, count * stride);
     defer gpa.free(bytes);
-    try checkDecode(filter, bytes, stride);
+    try checkDecode(filter, bytes, stride, .any);
 }
 
 test "the decoders match the original on fuzzed bytes" {
@@ -473,7 +505,7 @@ fn fuzzEncode(seed: u64) !void {
     const data = try gpa.alloc(f32, count * floats_per_item);
     defer gpa.free(data);
     for (data) |*v| v.* = fuzzFloat(rng);
-    gpa.free(try checkEncode(filter, data, stride, bits, mode));
+    gpa.free(try checkEncode(filter, data, stride, bits, mode, .any));
 }
 
 test "the encoders match the original on fuzzed floats" {
@@ -498,6 +530,8 @@ test "encodeFilterExp writes in place as the original does" {
         };
         c.meshopt_encodeFilterExp(want.ptr, 60, 12, 15, want.ptr, c_mode);
         mo.encodeFilterExp(std.mem.sliceAsBytes(got), 12, 15, got, mode);
+        // Some of the floats are special: see `Inputs.any`.
+        if (!Inputs.any.scalarComparable()) continue;
         try common.expectSame(
             u32,
             "in place",

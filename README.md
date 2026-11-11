@@ -83,6 +83,21 @@ part of the package), builds it from source, and runs three test binaries:
 Both sides are built with fused multiply-add off, so float steps round as
 written.
 
+The NEON paths (the vertex codec, the vertex filters, the meshlet codec and
+the spatial clusterizer) run against the original built for aarch64 under
+QEMU's user mode, which CI also does:
+
+```sh
+zig build test -Dtarget=aarch64-linux-musl -fqemu \
+    -Dtest-filter=vertexcodec -Dtest-filter=vertexfilter \
+    -Dtest-filter=meshletcodec -Dtest-filter=clusterizer
+```
+
+`qemu-aarch64` must be on the `PATH`. There the original is linked
+statically with musl, and C's undefined float-to-integer conversions,
+which the original's aarch64 build saturates and the port computes as on
+x86 (see [STATUS.md](STATUS.md)), are left out of the scalar comparisons.
+
 `zig build bench` times each function against the original, both in
 ReleaseFast.
 

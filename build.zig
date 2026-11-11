@@ -169,6 +169,10 @@ const suite_allocator_flags = suite_flags ++ [_][]const u8{"-DMESHOPTIMIZER_ALLO
 /// to compiler_rt's versions instead: its `bcmp`, which the original's
 /// `memcmp` calls become, compares a byte at a time, and its `cosf` and
 /// `log2f` round differently from glibc's.
+///
+/// Targets without glibc link it statically instead, as the aarch64 musl
+/// build that runs the NEON paths under QEMU does, where no C library of
+/// the target is installed to bind to.
 fn referenceLibrary(
     b: *std.Build,
     upstream: *std.Build.Dependency,
@@ -177,7 +181,7 @@ fn referenceLibrary(
 ) *std.Build.Step.Compile {
     const reference = b.addLibrary(.{
         .name = "meshoptimizer_reference",
-        .linkage = .dynamic,
+        .linkage = if (target.result.isGnuLibC()) .dynamic else .static,
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
@@ -185,7 +189,7 @@ fn referenceLibrary(
             .link_libcpp = true,
         }),
     });
-    reference.bundle_compiler_rt = false;
+    if (target.result.isGnuLibC()) reference.bundle_compiler_rt = false;
     reference.root_module.addCSourceFiles(.{
         .root = upstream.path("src"),
         .files = &upstream_sources,
