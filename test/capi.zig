@@ -364,6 +364,82 @@ export fn meshopt_computePositionExponent(
 }
 
 // --------------------------------------------------------
+// Vertex codec
+// --------------------------------------------------------
+
+/// The original's encoder version setting, which the port takes as a
+/// parameter.
+var encode_vertex_version: mo.VertexVersion = .default;
+
+export fn meshopt_encodeVertexBuffer(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+) usize {
+    return mo.encodeVertexBufferLevel(
+        itemsMut(u8, buffer, buffer_size),
+        bytes(vertices, vertex_count * vertex_size),
+        vertex_size,
+        2,
+        encode_vertex_version,
+    );
+}
+
+export fn meshopt_encodeVertexBufferBound(vertex_count: usize, vertex_size: usize) usize {
+    return mo.encodeVertexBufferBound(vertex_count, vertex_size);
+}
+
+export fn meshopt_encodeVertexBufferLevel(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    vertices: ?*const anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+    level: c_int,
+    version: c_int,
+) usize {
+    assert(version < 0 or version <= 1);
+    return mo.encodeVertexBufferLevel(
+        itemsMut(u8, buffer, buffer_size),
+        bytes(vertices, vertex_count * vertex_size),
+        vertex_size,
+        @intCast(level),
+        if (version < 0) encode_vertex_version else @fromBackingInt(@as(u4, @intCast(version))),
+    );
+}
+
+export fn meshopt_encodeVertexVersion(version: c_int) void {
+    assert(version >= 0 and version <= 1);
+    encode_vertex_version = @fromBackingInt(@as(u4, @intCast(version)));
+}
+
+export fn meshopt_decodeVertexBuffer(
+    destination: ?*anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int {
+    mo.decodeVertexBuffer(
+        bytesMut(destination, vertex_count * vertex_size),
+        vertex_size,
+        items(u8, buffer, buffer_size),
+    ) catch |err| return switch (err) {
+        error.InvalidHeader => -1,
+        error.InvalidData => -2,
+        error.LengthMismatch => -3,
+    };
+    return 0;
+}
+
+export fn meshopt_decodeVertexVersion(buffer: ?[*]const u8, buffer_size: usize) c_int {
+    const version = mo.decodeVertexVersion(items(u8, buffer, buffer_size)) orelse return -1;
+    return @backingInt(version);
+}
+
+// --------------------------------------------------------
 // Index codec
 // --------------------------------------------------------
 
@@ -1059,50 +1135,6 @@ export fn meshopt_spatialClusterPoints(
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
         cluster_size,
     ) catch oom();
-}
-
-export fn meshopt_encodeVertexBuffer(
-    _: ?[*]u8,
-    _: usize,
-    _: ?*const anyopaque,
-    _: usize,
-    _: usize,
-) usize {
-    pending("meshopt_encodeVertexBuffer");
-}
-
-export fn meshopt_encodeVertexBufferBound(_: usize, _: usize) usize {
-    pending("meshopt_encodeVertexBufferBound");
-}
-
-export fn meshopt_encodeVertexBufferLevel(
-    _: ?[*]u8,
-    _: usize,
-    _: ?*const anyopaque,
-    _: usize,
-    _: usize,
-    _: c_int,
-    _: c_int,
-) usize {
-    pending("meshopt_encodeVertexBufferLevel");
-}
-
-export fn meshopt_encodeVertexVersion(_: c_int) void {
-    pending("meshopt_encodeVertexVersion");
-}
-
-export fn meshopt_decodeVertexBuffer(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) c_int {
-    pending("meshopt_decodeVertexBuffer");
-}
-
-export fn meshopt_decodeVertexVersion(_: ?[*]const u8, _: usize) c_int {
-    pending("meshopt_decodeVertexVersion");
 }
 
 export fn meshopt_decodeFilterOct(_: ?*anyopaque, _: usize, _: usize) void {

@@ -189,16 +189,25 @@ fn referenceLibrary(
 /// without them.
 const scalar_sources = [_][]const u8{
     "meshletcodec.cpp",
+    "vertexcodec.cpp",
 };
 
 /// Their functions, each renamed `scalar_<name>` so they link beside the
-/// original's.
+/// original's, and their internal namespace renamed too, so no inline
+/// function of the scalar build stands in for its SIMD build's twin.
 const scalar_flags = reference_flags ++ [_][]const u8{
     "-DMESHOPTIMIZER_NO_SIMD",
+    "-Dmeshopt=scalar_meshopt",
     "-Dmeshopt_encodeMeshlet=scalar_meshopt_encodeMeshlet",
     "-Dmeshopt_encodeMeshletBound=scalar_meshopt_encodeMeshletBound",
     "-Dmeshopt_decodeMeshlet=scalar_meshopt_decodeMeshlet",
     "-Dmeshopt_decodeMeshletRaw=scalar_meshopt_decodeMeshletRaw",
+    "-Dmeshopt_encodeVertexBuffer=scalar_meshopt_encodeVertexBuffer",
+    "-Dmeshopt_encodeVertexBufferBound=scalar_meshopt_encodeVertexBufferBound",
+    "-Dmeshopt_encodeVertexBufferLevel=scalar_meshopt_encodeVertexBufferLevel",
+    "-Dmeshopt_encodeVertexVersion=scalar_meshopt_encodeVertexVersion",
+    "-Dmeshopt_decodeVertexBuffer=scalar_meshopt_decodeVertexBuffer",
+    "-Dmeshopt_decodeVertexVersion=scalar_meshopt_decodeVertexVersion",
 };
 
 /// The original's SIMD files built with their scalar paths, for the oracle

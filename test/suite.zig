@@ -51,6 +51,7 @@ const ported = [_]Module{
     .partition,
     .indexcodec,
     .meshletcodec,
+    .vertexcodec,
 };
 
 fn needs(modules: []const Module) !void {

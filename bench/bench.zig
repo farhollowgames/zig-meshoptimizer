@@ -325,6 +325,8 @@ pub fn main(init: std.process.Init) !void {
         bench.run("decodeMeshletRaw " ++ name, &meshlet_case.decode_raw);
     }
 
+    try vertexCodec(&bench, arena, soup);
+
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
     std.debug.print("{s:<44} {d:>10.1} {s:>6} {d:>10.1} {s:>6} {d:>6.2}\n", .{
@@ -2100,5 +2102,134 @@ const MeshletCodecCase = struct {
             .decode_words = .{ .packed_meshlets = packed_meshlets.items, .rounds = rounds },
             .decode_raw = .{ .packed_meshlets = packed_meshlets.items, .rounds = rounds },
         };
+    }
+};
+
+/// The vertex codec on the demo mesh and on a sphere of a million vertices,
+/// each as 32 bytes of floats and quantized into 16 bytes: the encoder at
+/// each level, and the decoder on streams of both versions.
+fn vertexCodec(bench: *Bench, arena: std.mem.Allocator, soup: []const Vertex) !void {
+    const remap = try arena.alloc(u32, soup.len);
+    const unique = c.meshopt_generateVertexRemap(
+        remap.ptr,
+        null,
+        soup.len,
+        soup.ptr,
+        soup.len,
+        @sizeOf(Vertex),
+    );
+    const pirate = try meshes.indexed(arena, soup, remap, unique);
+    const sphere = try meshes.sphere(arena, 999, 999);
+
+    const quantized_size = meshes.quantized_vertex_size;
+    const buffers = .{
+        .{ "pirate", std.mem.sliceAsBytes(pirate.vertices), @sizeOf(Vertex) },
+        .{ "pirate q16", try meshes.quantized(arena, pirate.vertices), quantized_size },
+        .{ "sphere 1M", std.mem.sliceAsBytes(sphere.vertices), @sizeOf(Vertex) },
+        .{ "sphere 1M q16", try meshes.quantized(arena, sphere.vertices), quantized_size },
+    };
+
+    inline for (buffers) |named| {
+        const name = named[0];
+        const vertices: []const u8 = named[1];
+        const vertex_size = named[2];
+        const vertex_count = vertices.len / vertex_size;
+        const bound = mo.encodeVertexBufferBound(vertex_count, vertex_size);
+
+        inline for (vertex_codec_settings) |setting| {
+            var encode: VertexEncodeCase = .{
+                .vertices = vertices,
+                .vertex_size = vertex_size,
+                .level = setting[1],
+                .version = setting[2],
+                .buffer = try arena.alloc(u8, bound),
+            };
+            bench.run("encodeVertexBuffer " ++ setting[0] ++ " " ++ name, &encode);
+
+            // The original's stream, which is the port's too, so that the
+            // port's encoder stays out of the decoder's profile.
+            const size = c.meshopt_encodeVertexBufferLevel(
+                encode.buffer.ptr,
+                encode.buffer.len,
+                vertices.ptr,
+                vertex_count,
+                vertex_size,
+                setting[1],
+                @backingInt(encode.version),
+            );
+            var decode: VertexDecodeCase = .{
+                .stream = encode.buffer[0..size],
+                .destination = try arena.alloc(u8, vertices.len),
+                .vertex_size = vertex_size,
+            };
+            bench.run("decodeVertexBuffer " ++ setting[0] ++ " " ++ name, &decode);
+        }
+    }
+}
+
+/// The encoder settings the vertex codec cases time: version 1 at each
+/// level, and version 0.
+const vertex_codec_settings = .{
+    .{ "v1 L0", 0, .v1 },
+    .{ "v1 L1", 1, .v1 },
+    .{ "v1 L2", 2, .v1 },
+    .{ "v1 L3", 3, .v1 },
+    .{ "v0", 2, .v0 },
+};
+
+const VertexEncodeCase = struct {
+    vertices: []const u8,
+    vertex_size: usize,
+    level: u4,
+    version: mo.VertexVersion,
+    buffer: []u8,
+
+    fn original(self: *VertexEncodeCase) void {
+        const size = c.meshopt_encodeVertexBufferLevel(
+            self.buffer.ptr,
+            self.buffer.len,
+            self.vertices.ptr,
+            self.vertices.len / self.vertex_size,
+            self.vertex_size,
+            self.level,
+            @backingInt(self.version),
+        );
+        std.mem.doNotOptimizeAway(size);
+        std.mem.doNotOptimizeAway(self.buffer.ptr);
+    }
+
+    fn port(self: *VertexEncodeCase) void {
+        const size = mo.encodeVertexBufferLevel(
+            self.buffer,
+            self.vertices,
+            self.vertex_size,
+            self.level,
+            self.version,
+        );
+        std.mem.doNotOptimizeAway(size);
+        std.mem.doNotOptimizeAway(self.buffer.ptr);
+    }
+};
+
+const VertexDecodeCase = struct {
+    stream: []const u8,
+    destination: []u8,
+    vertex_size: usize,
+
+    fn original(self: *VertexDecodeCase) void {
+        const result = c.meshopt_decodeVertexBuffer(
+            self.destination.ptr,
+            self.destination.len / self.vertex_size,
+            self.vertex_size,
+            self.stream.ptr,
+            self.stream.len,
+        );
+        std.debug.assert(result == 0);
+        std.mem.doNotOptimizeAway(self.destination.ptr);
+    }
+
+    fn port(self: *VertexDecodeCase) void {
+        mo.decodeVertexBuffer(self.destination, self.vertex_size, self.stream) catch unreachable;
+        std.mem.doNotOptimizeAway(self.destination.ptr);
     }
 };
