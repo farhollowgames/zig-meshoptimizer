@@ -164,9 +164,16 @@ fn checkDecode(
     if ((want_code == 0) != (want_scalar_code == 0)) return error.OriginalsDisagree;
     if (want_code == 0) try common.expectSame(u8, "original scalar", want, want_scalar);
 
+    // A build without SIMD decoders, such as Debug on x86's own backend,
+    // decodes with the scalar one, which on malformed buffers follows the
+    // original's scalar build.
     @memset(got, 0);
     const got_code = codeOf(mo.decodeVertexBuffer(got, vertex_size, stream));
-    try expectDecoded("decodeVertexBuffer", want_code, want, got_code, got);
+    if (vc.decoder_default == .scalar) {
+        try expectDecoded("decodeVertexBuffer", want_scalar_code, want_scalar, got_code, got);
+    } else {
+        try expectDecoded("decodeVertexBuffer", want_code, want, got_code, got);
+    }
 
     inline for (vc.testable_decoders) |decoder| {
         // The NEON decoder also runs on x86, for its shuffles, but on

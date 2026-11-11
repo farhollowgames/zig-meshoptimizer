@@ -803,7 +803,7 @@ const simd_backend = builtin.zig_backend == .stage2_llvm and
 
 /// The decoder `decodeVertexBuffer` uses, chosen as the original chooses
 /// its SIMD path at compile time.
-const decoder_default: Decoder = if (!simd_backend)
+pub const decoder_default: Decoder = if (!simd_backend)
     .scalar
 else if (builtin.cpu.hasAll(.x86, &.{ .avx512vbmi2, .avx512vbmi, .avx512vl }))
     .avx512

@@ -79,6 +79,14 @@ Output:
   group holds 16 sentinels, advances 16 bytes less than the other
   decoders, as the original's NEON build does, so its result there can
   differ from theirs.
+- **The decoder a build picks.** The port picks its vertex decoder at
+  compile time from the target, where the original's x86 build checks for
+  SSSE3 at run time. A baseline x86-64 build, or a Debug build on Zig's own
+  x86 backend, which builds no SIMD decoders, decodes with the scalar one.
+  Valid buffers decode to the same bytes either way; on a malformed buffer
+  the scalar decoder can return `error.LengthMismatch` where the
+  original's SSSE3 decoder returns its `error.InvalidData` code, as the
+  original's scalar build does.
 - **16-bit output past the returned count.** The original's 16-bit
   templates copy their whole scratch buffer to the destination, past the
   count they return, where the port leaves the destination as it was.

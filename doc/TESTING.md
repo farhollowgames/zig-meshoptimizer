@@ -108,7 +108,10 @@ Specifics:
 - In Debug, the x86 backend cannot assemble `rsqrtps` and `rcpps`, so the
   8-bit `decodeFilterOct` and `decodeFilterColor` take the scalar path,
   whose bytes differ from the SSE kernels' as the original's two builds do;
-  the tests compare them with the original's scalar build there.
+  the tests compare them with the original's scalar build there. The same
+  backend builds no SIMD vertex decoders, so `decodeVertexBuffer` decodes
+  with the scalar one; on malformed buffers its error codes follow the
+  original's scalar build, and the tests compare it with that build there.
 - The library has no threads of its own. `AllocatorCache` is the one part
   meant for several threads, and its unit tests share one cache between
   threads.

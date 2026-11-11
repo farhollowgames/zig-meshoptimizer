@@ -98,6 +98,7 @@ large mesh.
 | `encodeVertexBufferBound` | oracle-tested |
 | `decodeVertexBuffer`, scalar decoder | oracle-tested |
 | `decodeVertexBuffer`, SSSE3 decoder | oracle-tested |
+| `decodeVertexBuffer` in Debug builds, whose x86 backend builds no SIMD decoders: the scalar decoder, whose error codes on malformed buffers follow the original's scalar build | oracle-tested |
 | `decodeVertexBuffer`, AVX-512 VBMI2 decoder (the test machine's) | benchmarked |
 | `decodeVertexBuffer`, AArch64 NEON decoder, under QEMU; on x86 too, with `pshufb` for `tbl`, on the encoder's streams. A malformed buffer's 2- or 4-bit group of 16 sentinels advances it 16 bytes less than the other decoders, as in the original's NEON build, so its result there can differ from theirs | oracle-tested |
 | `decodeVertexBuffer` errors: invalid header, invalid data, length mismatch (`DecodeVertexError`) | oracle-tested |
