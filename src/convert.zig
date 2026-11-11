@@ -21,6 +21,16 @@ pub fn truncate(v: f32) i32 {
     return std.math.minInt(i32);
 }
 
+/// `truncate` on each lane, for loops Zig leaves scalar unless they are
+/// written on vectors.
+pub fn truncateLanes(comptime n: comptime_int, v: @Vector(n, f32)) @Vector(n, i32) {
+    const in_range = (v >= @as(@Vector(n, f32), @splat(-2147483648.0))) &
+        (v < @as(@Vector(n, f32), @splat(2147483648.0)));
+    const finite = @select(f32, in_range, v, @as(@Vector(n, f32), @splat(0)));
+    const truncated: @Vector(n, i32) = @intFromFloat(finite);
+    return @select(i32, in_range, truncated, @as(@Vector(n, i32), @splat(std.math.minInt(i32))));
+}
+
 // --------------------------------------------------------
 // Tests
 // --------------------------------------------------------
@@ -37,4 +47,15 @@ test "truncation gives the lowest int out of range" {
     try testing.expectEqual(std.math.minInt(i32), truncate(-std.math.inf(f32)));
     try testing.expectEqual(std.math.minInt(i32), truncate(std.math.nan(f32)));
     try testing.expectEqual(2147483520, truncate(2147483520.0));
+}
+
+test "lanes truncate as one value does" {
+    const values = [8]f32{
+        3.9,               -3.9,
+        -2147483648.0,     2147483648.0,
+        std.math.inf(f32), std.math.nan(f32),
+        2147483520.0,      -0.5,
+    };
+    const lanes: [8]i32 = truncateLanes(8, values);
+    for (values, lanes) |v, lane| try testing.expectEqual(truncate(v), lane);
 }

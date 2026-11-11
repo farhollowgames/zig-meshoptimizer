@@ -187,8 +187,15 @@ pub fn hashBuckets(count: usize) usize {
 
 /// The position in `table` that holds `key` or, if no entry matches it,
 /// the empty entry where it goes. `hasher` has `hash(T) u32` and
-/// `equal(T, T) bool`; the table is never full.
-pub fn hashLookup(comptime T: type, table: []const T, hasher: anytype, key: T, empty: T) usize {
+/// `equal(T, T) bool`; the table is never full. Inlined, as C++ inlines the
+/// original's template, so each caller's probe loop holds its hasher.
+pub inline fn hashLookup(
+    comptime T: type,
+    table: []const T,
+    hasher: anytype,
+    key: T,
+    empty: T,
+) usize {
     assert(std.math.isPowerOfTwo(table.len));
 
     const hashmod = table.len - 1;
@@ -488,9 +495,14 @@ pub fn remapVertexBuffer(
 /// `destination[i]` is `remap[indices[i]]`, or `remap[i]` for every vertex
 /// when `indices` is null. `destination` may be `indices` itself.
 pub fn remapIndexBuffer(destination: []u32, indices: ?[]const u32, remap: []const u32) void {
-    const index_count = if (indices) |list| list.len else remap.len;
-    for (destination[0..index_count], 0..) |*d, i| {
-        const index = if (indices) |list| list[i] else i;
+    const list = indices orelse {
+        // Every vertex in order: a copy, which the loop below would make
+        // one index at a time.
+        for (remap) |index| assert(index != none);
+        @memcpy(destination[0..remap.len], remap);
+        return;
+    };
+    for (destination[0..list.len], list) |*d, index| {
         assert(remap[index] != none);
 
         d.* = remap[index];

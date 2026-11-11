@@ -9,46 +9,74 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Scratch = @import("allocator.zig").Scratch;
 const VertexFloats = @import("strided.zig").VertexFloats;
-const truncate = @import("convert.zig").truncate;
+const convert = @import("convert.zig");
+const truncate = convert.truncate;
 
 /// `x` converted to 64 bits as C converts an `int` to `unsigned long long`:
-/// sign-extended.
-fn widen(x: i32) u64 {
-    return @bitCast(@as(i64, x));
+/// sign-extended. `x` is an `i32` or a vector of them.
+fn widen(x: anytype) Wide(@TypeOf(x)) {
+    return @bitCast(@as(Signed(@TypeOf(x)), x));
 }
 
-/// Spreads the low 20 bits of `x` apart, two zero bits after each.
-fn part1By2(x_in: u64) u64 {
+fn Wide(comptime T: type) type {
+    return if (T == i32) u64 else @Vector(@typeInfo(T).vector.len, u64);
+}
+
+fn Signed(comptime T: type) type {
+    return if (T == i32) i64 else @Vector(@typeInfo(T).vector.len, i64);
+}
+
+/// Spreads the low 20 bits of `x` apart, two zero bits after each. `x` is a
+/// `u64` or a vector of them.
+fn part1By2(x_in: anytype) @TypeOf(x_in) {
+    const T = @TypeOf(x_in);
+    const Amount = if (T == u64) u6 else @Vector(@typeInfo(T).vector.len, u6);
+    const mask = struct {
+        fn of(comptime m: u64) T {
+            return if (T == u64) m else @splat(m);
+        }
+    }.of;
+    const by = struct {
+        fn of(comptime n: u6) Amount {
+            return if (T == u64) n else @splat(n);
+        }
+    }.of;
     // ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- jihg fedc ba98 7654 3210
-    var x = x_in & 0x000fffff;
+    var x = x_in & mask(0x000fffff);
     // ---- ---- ---- jihg ---- ---- ---- ---- ---- ---- ---- ---- fedc ba98 7654 3210
-    x = (x ^ (x << 32)) & 0x000f00000000ffff;
+    x = (x ^ (x << by(32))) & mask(0x000f00000000ffff);
     // ---- ---- ---- jihg ---- ---- ---- ---- fedc ba98 ---- ---- ---- ---- 7654 3210
-    x = (x ^ (x << 16)) & 0x000f0000ff0000ff;
+    x = (x ^ (x << by(16))) & mask(0x000f0000ff0000ff);
     // ---- ---- ---- jihg ---- ---- fedc ---- ---- ba98 ---- ---- 7654 ---- ---- 3210
-    x = (x ^ (x << 8)) & 0x000f00f00f00f00f;
+    x = (x ^ (x << by(8))) & mask(0x000f00f00f00f00f);
     // ---- ---- ji-- --hg ---- fe-- --dc ---- ba-- --98 ---- 76-- --54 ---- 32-- --10
-    x = (x ^ (x << 4)) & 0x00c30c30c30c30c3;
+    x = (x ^ (x << by(4))) & mask(0x00c30c30c30c30c3);
     // ---- --j- -i-- h--g --f- -e-- d--c --b- -a-- 9--8 --7- -6-- 5--4 --3- -2-- 1--0
-    x = (x ^ (x << 2)) & 0x0249249249249249;
+    x = (x ^ (x << by(2))) & mask(0x0249249249249249);
     return x;
 }
+
+/// Vertices per vector step of the loops Zig would leave scalar.
+const lanes = 8;
 
 /// Writes a key per vertex: its position inside the mesh's bounding cube,
 /// 16 bits per axis, as a Morton code if `morton`, else as x, y and z in
 /// fields of 20 bits.
 fn computeOrder(result: []u64, positions: VertexFloats, comptime morton: bool) void {
-    var minv: [3]f32 = @splat(std.math.floatMax(f32));
-    var maxv: [3]f32 = @splat(-std.math.floatMax(f32));
+    // The bounds in the first three lanes of four; the fourth repeats z.
+    var min4: @Vector(4, f32) = @splat(std.math.floatMax(f32));
+    var max4: @Vector(4, f32) = @splat(-std.math.floatMax(f32));
 
     for (0..result.len) |i| {
         const v = positions.vec3(i);
+        const v4: @Vector(4, f32) = .{ v[0], v[1], v[2], v[2] };
 
-        for (&minv, &maxv, v) |*min, *max, vj| {
-            min.* = if (min.* > vj) vj else min.*;
-            max.* = if (max.* < vj) vj else max.*;
-        }
+        min4 = @select(f32, min4 > v4, v4, min4);
+        max4 = @select(f32, max4 < v4, v4, max4);
     }
+
+    const minv: [3]f32 = .{ min4[0], min4[1], min4[2] };
+    const maxv: [3]f32 = .{ max4[0], max4[1], max4[2] };
 
     var extent: f32 = 0;
 
@@ -57,7 +85,31 @@ fn computeOrder(result: []u64, positions: VertexFloats, comptime morton: bool) v
     // Each axis scales to 16 bits, for 48-bit Morton codes.
     const scale: f32 = if (extent == 0) 0 else 65535.0 / extent;
 
-    for (result, 0..) |*key, i| {
+    const Floats = @Vector(lanes, f32);
+    const Keys = @Vector(lanes, u64);
+    var start: usize = 0;
+    while (start + lanes <= result.len) : (start += lanes) {
+        var axes: [3][lanes]f32 = undefined;
+        for (0..lanes) |l| {
+            const v = positions.vec3(start + l);
+            for (&axes, v) |*axis, vj| axis[l] = vj;
+        }
+
+        var cells: [3]Keys = undefined;
+        for (&cells, axes, minv) |*cell, axis, min| {
+            const offset = @as(Floats, axis) - @as(Floats, @splat(min));
+            const rounded = offset * @as(Floats, @splat(scale)) + @as(Floats, @splat(0.5));
+            cell.* = widen(convert.truncateLanes(lanes, rounded));
+        }
+        const x, const y, const z = cells;
+
+        result[start..][0..lanes].* = if (morton)
+            part1By2(x) | (part1By2(y) << @splat(1)) | (part1By2(z) << @splat(2))
+        else
+            x | (y << @splat(20)) | (z << @splat(40));
+    }
+
+    for (result[start..], start..) |*key, i| {
         const v = positions.vec3(i);
 
         const x = widen(truncate((v[0] - minv[0]) * scale + 0.5));
@@ -68,6 +120,32 @@ fn computeOrder(result: []u64, positions: VertexFloats, comptime morton: bool) v
             part1By2(x) | (part1By2(y) << 1) | (part1By2(z) << 2)
         else
             (x << 0) | (y << 20) | (z << 40);
+    }
+}
+
+/// Writes 0, 1, 2 and on to `list`.
+fn writeIdentity(list: []u32) void {
+    const Indices = @Vector(lanes, u32);
+    var next: Indices = std.simd.iota(u32, lanes);
+    var start: usize = 0;
+    while (start + lanes <= list.len) : (start += lanes) {
+        list[start..][0..lanes].* = next;
+        next += @splat(lanes);
+    }
+    for (list[start..], start..) |*item, i| item.* = @intCast(i);
+}
+
+/// Writes `(key >> shift) & mask` of each key to `segments`.
+fn writeSegments(segments: []u16, keys: []const u64, shift: u6, mask: u16) void {
+    const Keys = @Vector(lanes, u64);
+    var start: usize = 0;
+    while (start + lanes <= keys.len) : (start += lanes) {
+        const key: Keys = keys[start..][0..lanes].*;
+        const segment = (key >> @splat(shift)) & @as(Keys, @splat(mask));
+        segments[start..][0..lanes].* = @as(@Vector(lanes, u16), @intCast(segment));
+    }
+    for (keys[start..], segments[start..]) |key, *segment| {
+        segment.* = @intCast((key >> shift) & mask);
     }
 }
 
@@ -264,7 +342,7 @@ pub fn spatialSortRemap(
 
     const remap = destination[0..vertex_count];
 
-    for (remap, 0..) |*r, i| r.* = @intCast(i);
+    writeIdentity(remap);
 
     const order = [2][]u32{ work[0..vertex_count], remap };
 
@@ -274,7 +352,7 @@ pub fn spatialSortRemap(
         // the pass's cache pressure.
         const shift: u6 = @intCast(k * 10);
 
-        for (keys, key_segments) |key, *segment| segment.* = @intCast((key >> shift) & 1023);
+        writeSegments(key_segments, keys, shift, 1023);
 
         radixSort10(order[k % 2], order[(k + 1) % 2], key_segments);
     }
@@ -366,14 +444,14 @@ pub fn spatialClusterPoints(
         // passes' cache pressure.
         const shift: u6 = @intCast(k * 20);
 
-        for (keys, key_segments) |key, *segment| segment.* = @truncate(key >> shift);
+        writeSegments(key_segments, keys, shift, 0xffff);
 
         var hist: [256][2]u32 = undefined;
         computeHistogram(&hist, key_segments);
 
         const axis = order[k * vertex_count ..][0..vertex_count];
 
-        for (axis, 0..) |*point, i| point.* = @intCast(i);
+        writeIdentity(axis);
 
         radixPass(work[0..vertex_count], axis, key_segments, &hist, 0);
         radixPass(axis, work[0..vertex_count], key_segments, &hist, 1);
@@ -397,9 +475,13 @@ pub fn spatialClusterPoints(
 const testing = std.testing;
 
 test "morton codes interleave the axes" {
-    try testing.expectEqual(0b111, part1By2(1) | part1By2(1) << 1 | part1By2(1) << 2);
-    try testing.expectEqual(0b1000, part1By2(2));
-    try testing.expectEqual(0x0249249249249249, part1By2(0xfffff));
+    const one = part1By2(@as(u64, 1));
+    try testing.expectEqual(0b111, one | one << 1 | one << 2);
+    try testing.expectEqual(0b1000, part1By2(@as(u64, 2)));
+    try testing.expectEqual(0x0249249249249249, part1By2(@as(u64, 0xfffff)));
+    const lanes_in: @Vector(2, u64) = .{ 2, 0xfffff };
+    const spread: [2]u64 = part1By2(lanes_in);
+    try testing.expectEqual([2]u64{ 0b1000, 0x0249249249249249 }, spread);
 }
 
 test "a remap orders points along the curve" {
