@@ -96,22 +96,43 @@ fn fuzzNorms(seed: u64) !void {
     try checkNorms(&values);
 }
 
-/// Every value at every bit count both functions take.
+/// Every value at every bit count both functions take, one at a time and
+/// in vectors of 16 and 3 lanes.
 fn checkNorms(values: []const f32) !void {
     for (1..31) |bits| {
-        for (values) |v| {
+        for (values, 0..) |v, i| {
             const want = c.reference_quantizeUnorm(v, @intCast(bits));
             const got = mo.quantizeUnorm(v, @intCast(bits));
             try common.expectSameValue(i64, "quantizeUnorm", want, got);
+            inline for (.{ 16, 3 }) |lanes| {
+                const lane = i % lanes;
+                const vector = laneVector(lanes, values, i - lane);
+                const got_lanes: [lanes]u32 = mo.quantizeUnorm(vector, @intCast(bits));
+                try common.expectSameValue(i64, "quantizeUnorm, lanes", want, got_lanes[lane]);
+            }
         }
     }
     for (1..32) |bits| {
-        for (values) |v| {
+        for (values, 0..) |v, i| {
             const want = c.reference_quantizeSnorm(v, @intCast(bits));
             const got = mo.quantizeSnorm(v, @intCast(bits));
             try common.expectSameValue(i64, "quantizeSnorm", want, got);
+            inline for (.{ 16, 3 }) |lanes| {
+                const lane = i % lanes;
+                const vector = laneVector(lanes, values, i - lane);
+                const got_lanes: [lanes]i32 = mo.quantizeSnorm(vector, @intCast(bits));
+                try common.expectSameValue(i64, "quantizeSnorm, lanes", want, got_lanes[lane]);
+            }
         }
     }
+}
+
+/// `values` from `start` as a vector, padded with zeros past their end.
+fn laneVector(comptime lanes: usize, values: []const f32, start: usize) @Vector(lanes, f32) {
+    var lane_values: [lanes]f32 = @splat(0);
+    const n = @min(lanes, values.len - start);
+    @memcpy(lane_values[0..n], values[start..][0..n]);
+    return lane_values;
 }
 
 test "computePositionExponent matches the original on fuzzed boxes" {

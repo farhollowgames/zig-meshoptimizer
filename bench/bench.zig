@@ -316,6 +316,16 @@ pub fn main(init: std.process.Init) !void {
         bench.run("partitionClusters " ++ name, &partition_case);
     }
 
+    // 16-bit indices, against the original's 16-bit templates, on the demo
+    // mesh, the one whose vertices 16 bits can index.
+    {
+        var index16_case: Index16Case = try .init(arena, bench.gpa, pirate);
+        inline for (@typeInfo(Index16Case.Kind).@"enum".field_names) |kind| {
+            index16_case.kind = @field(Index16Case.Kind, kind);
+            bench.run(kind ++ " u16 pirate", &index16_case);
+        }
+    }
+
     // The codecs, on index buffers optimized for the vertex cache and for
     // vertex fetch, and on the meshlets of those, as they are usually used.
     // The demo mesh runs many rounds per timing, as one is short.
@@ -894,6 +904,9 @@ const QuantizeCase = struct {
         quantizeFloat,
         quantizeUnorm,
         quantizeSnorm,
+        /// The vector forms, 16 values a call, against the original's loop.
+        @"quantizeUnorm x16",
+        @"quantizeSnorm x16",
         computePositionExponent,
     };
 
@@ -939,13 +952,13 @@ const QuantizeCase = struct {
             .quantizeFloat => for (self.values, self.floats) |v, *f| {
                 f.* = c.meshopt_quantizeFloat(v, 10);
             },
-            .quantizeUnorm => c.reference_quantizeUnormArray(
+            .quantizeUnorm, .@"quantizeUnorm x16" => c.reference_quantizeUnormArray(
                 self.ints.ptr,
                 self.values.ptr,
                 count,
                 10,
             ),
-            .quantizeSnorm => c.reference_quantizeSnormArray(
+            .quantizeSnorm, .@"quantizeSnorm x16" => c.reference_quantizeSnormArray(
                 self.ints.ptr,
                 self.values.ptr,
                 count,
@@ -977,12 +990,27 @@ const QuantizeCase = struct {
             .quantizeSnorm => for (self.values, self.ints) |v, *i| {
                 i.* = mo.quantizeSnorm(v, bits);
             },
+            .@"quantizeUnorm x16" => quantizeLanes(false, self.values, self.ints, bits),
+            .@"quantizeSnorm x16" => quantizeLanes(true, self.values, self.ints, bits),
             .computePositionExponent => for (self.boxes, self.exponents) |box, *e| {
                 e.* = mo.computePositionExponent(box[0], box[1], min_exp, max_bits);
             },
         }
     }
 };
+
+/// `quantizeUnorm` or `quantizeSnorm` of `values` into `ints`, 16 at a
+/// time; `values` holds a multiple of 16.
+fn quantizeLanes(comptime snorm: bool, values: []const f32, ints: []i32, bits: u5) void {
+    var i: usize = 0;
+    while (i < values.len) : (i += 16) {
+        const v: @Vector(16, f32) = values[i..][0..16].*;
+        ints[i..][0..16].* = if (snorm)
+            mo.quantizeSnorm(v, bits)
+        else
+            @bitCast(mo.quantizeUnorm(v, bits));
+    }
+}
 
 /// The soup's vertices as three streams: positions, normals and texture
 /// coordinates.
@@ -1489,6 +1517,128 @@ const VertexCacheCase = struct {
         };
         done catch unreachable;
         std.mem.doNotOptimizeAway(self.destination);
+    }
+};
+
+/// Three functions on 16-bit indices: the vertex cache order, the
+/// simplifier at a quarter of the triangles, and the meshlet builder.
+const Index16Case = struct {
+    gpa: std.mem.Allocator,
+    vertices: []const Vertex,
+    indices: []const u16,
+    destination: []u16,
+    meshlets: []mo.Meshlet,
+    meshlet_vertices: []u32,
+    meshlet_triangles: []u8,
+    kind: Kind = .optimizeVertexCache,
+
+    const Kind = enum { optimizeVertexCache, simplify, buildMeshlets };
+    const max_vertices = 64;
+    const max_triangles = 124;
+    const cone_weight = 0.25;
+    const target_error = 1e-2;
+
+    fn init(arena: std.mem.Allocator, gpa: std.mem.Allocator, mesh: meshes.Mesh) !Index16Case {
+        const indices = try arena.alloc(u16, mesh.indices.len);
+        for (indices, mesh.indices) |*narrow, index| narrow.* = @intCast(index);
+        const bound = mo.buildMeshletsBound(indices.len, max_vertices, max_triangles);
+        return .{
+            .gpa = gpa,
+            .vertices = mesh.vertices,
+            .indices = indices,
+            .destination = try arena.alloc(u16, indices.len),
+            .meshlets = try arena.alloc(mo.Meshlet, bound),
+            .meshlet_vertices = try arena.alloc(u32, indices.len),
+            .meshlet_triangles = try arena.alloc(u8, indices.len),
+        };
+    }
+
+    pub fn work(self: *const Index16Case) Work {
+        return .{ .triangles = self.indices.len / 3 };
+    }
+
+    fn target(self: *const Index16Case) usize {
+        return self.indices.len / 3 / 4 * 3;
+    }
+
+    fn original(self: *Index16Case) void {
+        const i = self.indices;
+        const v = self.vertices;
+        const p: [*]const f32 = @ptrCast(v.ptr);
+        switch (self.kind) {
+            .optimizeVertexCache => c.reference16_optimizeVertexCache(
+                self.destination.ptr,
+                i.ptr,
+                i.len,
+                v.len,
+            ),
+            .simplify => std.mem.doNotOptimizeAway(c.reference16_simplify(
+                self.destination.ptr,
+                i.ptr,
+                i.len,
+                p,
+                v.len,
+                @sizeOf(Vertex),
+                self.target(),
+                target_error,
+                0,
+                null,
+            )),
+            .buildMeshlets => std.mem.doNotOptimizeAway(c.reference16_buildMeshlets(
+                @ptrCast(self.meshlets.ptr),
+                self.meshlet_vertices.ptr,
+                self.meshlet_triangles.ptr,
+                i.ptr,
+                i.len,
+                p,
+                v.len,
+                @sizeOf(Vertex),
+                max_vertices,
+                max_triangles,
+                cone_weight,
+            )),
+        }
+        std.mem.doNotOptimizeAway(self.destination);
+        std.mem.doNotOptimizeAway(self.meshlets);
+    }
+
+    fn port(self: *Index16Case) void {
+        const i = self.indices;
+        const positions = positionsOf(self.vertices);
+        switch (self.kind) {
+            .optimizeVertexCache => mo.optimizeVertexCache(
+                u16,
+                self.gpa,
+                self.destination,
+                i,
+                self.vertices.len,
+            ) catch unreachable,
+            .simplify => std.mem.doNotOptimizeAway(mo.simplify(
+                u16,
+                self.gpa,
+                self.destination,
+                i,
+                positions,
+                runtime(usize, self.target()),
+                runtime(f32, target_error),
+                runtime(mo.SimplifyOptions, .{}),
+                null,
+            ) catch unreachable),
+            .buildMeshlets => std.mem.doNotOptimizeAway(mo.buildMeshlets(
+                u16,
+                self.gpa,
+                self.meshlets,
+                self.meshlet_vertices,
+                self.meshlet_triangles,
+                i,
+                positions,
+                runtime(usize, max_vertices),
+                runtime(usize, max_triangles),
+                runtime(f32, cone_weight),
+            ) catch unreachable),
+        }
+        std.mem.doNotOptimizeAway(self.destination);
+        std.mem.doNotOptimizeAway(self.meshlets);
     }
 };
 

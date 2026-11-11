@@ -7,33 +7,71 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-/// Quantizes `v` in [0, 1] into a `bits`-bit unorm value, for the
+/// Quantizes `value` in [0, 1] into a `bits`-bit unorm value, for the
 /// reconstruction `q / (2^bits - 1)` that fixed-function normalized
 /// formats use; out-of-range values clamp, and NaN gives 0. The largest
-/// reconstruction error is 1/2^(bits+1). `bits` is 1 to 30.
-pub fn quantizeUnorm(v: f32, bits: u5) u32 {
-    const scale: f32 = @floatFromInt((@as(u32, 1) << bits) - 1);
+/// reconstruction error is 1/2^(bits+1). `bits` is 1 to 30. `value` is an
+/// `f32`, giving a `u32`, or a vector of them, giving a vector of `u32`
+/// with each lane as the `f32` form gives it: Zig does not vectorize a
+/// loop of calls on its own.
+pub fn quantizeUnorm(value: anytype, bits: u5) Lanes(@TypeOf(value), u32) {
+    const F = Floats(@TypeOf(value));
+    const v: F = value;
+    const scale = splat(F, @floatFromInt((@as(u32, 1) << bits) - 1));
 
-    var clamped = if (v >= 0) v else 0;
-    clamped = if (clamped <= 1) clamped else 1;
+    const zero = splat(F, 0);
+    const one = splat(F, 1);
+    var clamped = pick(F, v >= zero, v, zero);
+    clamped = pick(F, clamped <= one, clamped, one);
 
-    return @intFromFloat(clamped * scale + 0.5);
+    return @intFromFloat(clamped * scale + splat(F, 0.5));
 }
 
-/// Quantizes `v` in [-1, 1] into a `bits`-bit snorm value, for the
+/// Quantizes `value` in [-1, 1] into a `bits`-bit snorm value, for the
 /// reconstruction `q / (2^(bits-1) - 1)` that fixed-function normalized
 /// formats use (except early OpenGL); out-of-range values clamp, and NaN
 /// gives the minimum. The largest reconstruction error is 1/2^bits. `bits`
-/// is 1 to 31.
-pub fn quantizeSnorm(v: f32, bits: u5) i32 {
-    const scale: f32 = @floatFromInt((@as(i32, 1) << (bits - 1)) - 1);
+/// is 1 to 31. `value` is an `f32`, giving an `i32`, or a vector of them, as
+/// for `quantizeUnorm`.
+pub fn quantizeSnorm(value: anytype, bits: u5) Lanes(@TypeOf(value), i32) {
+    const F = Floats(@TypeOf(value));
+    const v: F = value;
+    const scale = splat(F, @floatFromInt((@as(i32, 1) << (bits - 1)) - 1));
 
-    const round: f32 = if (v >= 0) 0.5 else -0.5;
+    const round = pick(F, v >= splat(F, 0), splat(F, 0.5), splat(F, -0.5));
 
-    var clamped = if (v >= -1) v else -1;
-    clamped = if (clamped <= 1) clamped else 1;
+    const minus_one = splat(F, -1);
+    const one = splat(F, 1);
+    var clamped = pick(F, v >= minus_one, v, minus_one);
+    clamped = pick(F, clamped <= one, clamped, one);
 
     return @intFromFloat(clamped * scale + round);
+}
+
+/// `f32` for a scalar `T`, and a vector of `f32` as long as a vector `T`.
+fn Floats(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .vector => |vector| @Vector(vector.len, f32),
+        else => f32,
+    };
+}
+
+/// `I` for a scalar `T`, and a vector of `I` as long as a vector `T`.
+fn Lanes(comptime T: type, comptime I: type) type {
+    return switch (@typeInfo(T)) {
+        .vector => |vector| @Vector(vector.len, I),
+        else => I,
+    };
+}
+
+/// `x` as an `F`, an `f32` or a vector of them.
+fn splat(comptime F: type, x: f32) F {
+    return if (F == f32) x else @splat(x);
+}
+
+/// `a` where `condition` holds and `b` elsewhere, lane by lane for vectors.
+fn pick(comptime F: type, condition: anytype, a: F, b: F) F {
+    return if (F == f32) (if (condition) a else b) else @select(f32, condition, a, b);
 }
 
 /// Quantizes `v` into an IEEE-754 half float, rounding to nearest: overflow
