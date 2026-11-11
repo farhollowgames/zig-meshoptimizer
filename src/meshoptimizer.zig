@@ -166,6 +166,10 @@ pub const opacityMapRasterize = opacitymap.opacityMapRasterize;
 pub const opacityMapEntrySize = opacitymap.opacityMapEntrySize;
 pub const opacityMapCompact = opacitymap.opacityMapCompact;
 
+/// The original's cluster LOD builder from its demo, kept in its own namespace
+/// since names like `Config` and `build` say nothing at the root.
+pub const clusterlod = @import("clusterlod.zig");
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");

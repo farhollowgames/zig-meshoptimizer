@@ -230,7 +230,32 @@ large mesh.
 
 | function, option or mode | state |
 | --- | --- |
-| `clodBuild`, `clodDefaultConfig`, `clodDefaultConfigRT`, `clodLocalIndices`, `clodBuildHierarchyBound`, `clodBuildHierarchy`, every config option | not started |
+| `clodConfig` (`clusterlod.Config`, the original's field names), `clodDefaultConfig`, `clodDefaultConfigRT` (`defaultConfig`, `defaultConfigRT`), every `max_triangles` from 4 to 256 | oracle-tested |
+| `clodBuild` (`build`): `clodMesh` as `Mesh` (slices and `VertexFloats`), the output callback as a context's `output` method returning `i32` or an error union, whose error stops the build | oracle-tested; 0.96 to 1.05 |
+| `build` limits: `max_vertices` 3 to 256, `min_triangles` and `max_triangles` 1 to 512 | oracle-tested |
+| `partition_spatial` | oracle-tested |
+| `partition_sort` | oracle-tested |
+| `partition_size`, from 1, groups past 32 clusters included | oracle-tested |
+| `cluster_spatial`, `cluster_fill_weight` | oracle-tested |
+| `cluster_split_factor` | oracle-tested |
+| `simplify_ratio`, 0 to 1 | oracle-tested |
+| `simplify_threshold`, below 1 | oracle-tested |
+| `simplify_error_merge_previous`, `simplify_error_merge_additive` | oracle-tested |
+| `simplify_error_factor_sloppy` | oracle-tested |
+| `simplify_error_edge_limit` | oracle-tested |
+| `simplify_error_clamped` | oracle-tested |
+| `simplify_permissive` | oracle-tested |
+| `simplify_fallback_permissive`, with the zeros the original's vector resize leaves when the permissive count is the larger | oracle-tested |
+| `simplify_fallback_sloppy` | oracle-tested |
+| `simplify_regularize` | oracle-tested |
+| `simplify_preserve_folds` | oracle-tested |
+| `simplify_dilate_borders`, writing through `Mesh.positions_mut` (the original casts away `const`) | oracle-tested |
+| `optimize_bounds` | oracle-tested |
+| `optimize_clusters`, `optimize_clusters_level` 0 to 9 (a `u4`) | oracle-tested |
+| mesh inputs: attributes in the vertices or a buffer of their own, up to 16 weighed; `attribute_protect_mask`; `vertex_lock` flags `lock`, `protect` and `priority`; position strides from 3 to 64 floats; vertices no triangle uses | oracle-tested |
+| ids from output, recorded as `Cluster.refined`: any `i32`, -1 among them (as for the mesh's own triangles) | oracle-tested |
+| `clodLocalIndices` (`localIndices`) | oracle-tested |
+| `clodBuildHierarchyBound`, `clodBuildHierarchy` (`buildHierarchyBound`, `buildHierarchy`), node widths 2 to 80 | benchmarked |
 
 ## The header
 
@@ -261,3 +286,4 @@ large mesh.
 - **The NEON vertex decoder's recomputed delta base on Apple and Windows**:
   the same values by a shorter dependency chain.
 - **The C++ index-type templates**, above.
+- **Cluster LOD**: `clodBuild` without an output callback (a context whose `output` returns -1 does the same); the C++ template overload for lambdas (any context with `output`); NaN, infinite or overflowing positions, on which `computeClusterBounds` asserts (the original too, with asserts on); an `attribute_protect_mask` with attribute strides of 32 floats or more, where the original shifts past 31 bits (undefined) and the port reads attributes 0 to 31.

@@ -689,6 +689,10 @@ export fn meshopt_decodeVertexVersion(buffer: ?[*]const u8, buffer_size: usize) 
     return @backingInt(version);
 }
 
+// --------------------------------------------------------
+// Vertex filters
+// --------------------------------------------------------
+
 export fn meshopt_decodeFilterOct(buffer: ?*anyopaque, count: usize, stride: usize) void {
     mo.decodeFilterOct(bytesMut(buffer, count * stride), stride);
 }

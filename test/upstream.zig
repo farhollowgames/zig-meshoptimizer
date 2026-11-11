@@ -735,3 +735,115 @@ pub extern fn reference_simplifyEdge(
 /// test/system_libm.cpp in the reference library.
 pub extern fn reference_cosf(x: f32) f32;
 pub extern fn reference_log2f(x: f32) f32;
+
+// The original's cluster LOD builder, demo/clusterlod.h, as
+// test/clusterlod.cpp builds it into the reference library.
+
+pub const ClodConfig = extern struct {
+    max_vertices: usize,
+    min_triangles: usize,
+    max_triangles: usize,
+    partition_spatial: bool,
+    partition_sort: bool,
+    partition_size: usize,
+    cluster_spatial: bool,
+    cluster_fill_weight: f32,
+    cluster_split_factor: f32,
+    simplify_ratio: f32,
+    simplify_threshold: f32,
+    simplify_error_merge_previous: f32,
+    simplify_error_merge_additive: f32,
+    simplify_error_factor_sloppy: f32,
+    simplify_error_edge_limit: f32,
+    simplify_error_clamped: bool,
+    simplify_permissive: bool,
+    simplify_fallback_permissive: bool,
+    simplify_fallback_sloppy: bool,
+    simplify_regularize: bool,
+    simplify_preserve_folds: bool,
+    simplify_dilate_borders: bool,
+    optimize_bounds: bool,
+    optimize_clusters: bool,
+    optimize_clusters_level: c_int,
+};
+
+pub const ClodMesh = extern struct {
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]const f32,
+    vertex_attributes_stride: usize,
+    vertex_lock: ?[*]const u8,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    attribute_protect_mask: u32,
+};
+
+pub const ClodBounds = extern struct {
+    center: [3]f32,
+    radius: f32,
+    @"error": f32,
+};
+
+pub const ClodCluster = extern struct {
+    refined: c_int,
+    bounds: ClodBounds,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_count: usize,
+};
+
+pub const ClodGroup = extern struct {
+    depth: c_int,
+    simplified: ClodBounds,
+};
+
+pub const ClodNode = extern struct {
+    bounds: ClodBounds,
+    group: c_int,
+    child_offset: u32,
+    child_count: u32,
+};
+
+/// clodOutput with the group by pointer, as reference_clodBuild calls it.
+pub const ClodOutput = *const fn (
+    context: ?*anyopaque,
+    group: *const ClodGroup,
+    clusters: [*]const ClodCluster,
+    cluster_count: usize,
+) callconv(.c) c_int;
+
+/// clodDefaultConfig, clodDefaultConfigRT and clodBuild with their structs
+/// by pointer.
+pub extern fn reference_clodDefaultConfig(config: *ClodConfig, max_triangles: usize) void;
+pub extern fn reference_clodDefaultConfigRT(config: *ClodConfig, max_triangles: usize) void;
+pub extern fn reference_clodBuild(
+    config: *const ClodConfig,
+    mesh: *const ClodMesh,
+    context: ?*anyopaque,
+    output: ?ClodOutput,
+) void;
+/// The sizes of clodConfig, clodMesh, clodBounds, clodCluster, clodGroup
+/// and clodNode, in that order.
+pub extern fn reference_clodSizes(sizes: *[6]usize) void;
+
+pub extern fn clodLocalIndices(
+    vertices: [*]u32,
+    triangles: [*]u8,
+    indices: ?[*]const u32,
+    index_count: usize,
+) usize;
+pub extern fn clodBuildHierarchyBound(
+    group_count: usize,
+    node_width: usize,
+    level_count: usize,
+) usize;
+pub extern fn clodBuildHierarchy(
+    nodes: ?[*]ClodNode,
+    groups: ?[*]const ClodGroup,
+    group_count: usize,
+    node_width: usize,
+    level_count: usize,
+) usize;
