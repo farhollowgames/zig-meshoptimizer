@@ -364,6 +364,192 @@ export fn meshopt_computePositionExponent(
 }
 
 // --------------------------------------------------------
+// Index codec
+// --------------------------------------------------------
+
+/// The C interface's encoder version, which `meshopt_encodeIndexVersion`
+/// sets; the port takes it as a parameter.
+var index_version: mo.IndexVersion = .default;
+
+fn indexResult(result: mo.IndexDecodeError!void) c_int {
+    result catch |err| return switch (err) {
+        error.InvalidHeader => -1,
+        error.Truncated => -2,
+        error.SizeMismatch => -3,
+    };
+    return 0;
+}
+
+export fn meshopt_encodeIndexBuffer(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    indices: ?[*]const u32,
+    index_count: usize,
+) usize {
+    return mo.encodeIndexBuffer(
+        itemsMut(u8, buffer, buffer_size),
+        items(u32, indices, index_count),
+        index_version,
+    ) catch 0;
+}
+
+export fn meshopt_encodeIndexBufferBound(index_count: usize, vertex_count: usize) usize {
+    return mo.encodeIndexBufferBound(index_count, vertex_count);
+}
+
+export fn meshopt_encodeIndexVersion(version: c_int) void {
+    assert(version >= 0 and version <= 1);
+    index_version = @fromBackingInt(@as(u4, @intCast(version)));
+}
+
+export fn meshopt_decodeIndexBuffer(
+    destination: ?*anyopaque,
+    index_count: usize,
+    index_size: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int {
+    const encoded = items(u8, buffer, buffer_size);
+    return indexResult(switch (index_size) {
+        inline 2, 4 => |size| blk: {
+            const T = if (size == 2) u16 else u32;
+            const decoded = itemsMut(T, @ptrCast(@alignCast(destination)), index_count);
+            break :blk mo.decodeIndexBuffer(T, decoded, encoded);
+        },
+        else => unreachable,
+    });
+}
+
+export fn meshopt_decodeIndexVersion(buffer: ?[*]const u8, buffer_size: usize) c_int {
+    const version = mo.decodeIndexVersion(items(u8, buffer, buffer_size)) orelse return -1;
+    return @backingInt(version);
+}
+
+export fn meshopt_encodeIndexSequence(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    indices: ?[*]const u32,
+    index_count: usize,
+) usize {
+    return mo.encodeIndexSequence(
+        itemsMut(u8, buffer, buffer_size),
+        items(u32, indices, index_count),
+        index_version,
+    ) catch 0;
+}
+
+export fn meshopt_encodeIndexSequenceBound(index_count: usize, vertex_count: usize) usize {
+    return mo.encodeIndexSequenceBound(index_count, vertex_count);
+}
+
+export fn meshopt_decodeIndexSequence(
+    destination: ?*anyopaque,
+    index_count: usize,
+    index_size: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int {
+    const encoded = items(u8, buffer, buffer_size);
+    return indexResult(switch (index_size) {
+        inline 2, 4 => |size| blk: {
+            const T = if (size == 2) u16 else u32;
+            const decoded = itemsMut(T, @ptrCast(@alignCast(destination)), index_count);
+            break :blk mo.decodeIndexSequence(T, decoded, encoded);
+        },
+        else => unreachable,
+    });
+}
+
+// --------------------------------------------------------
+// Meshlet codec
+// --------------------------------------------------------
+
+fn meshletResult(result: mo.MeshletDecodeError!void) c_int {
+    result catch |err| return switch (err) {
+        error.Truncated => -2,
+        error.SizeMismatch => -3,
+    };
+    return 0;
+}
+
+export fn meshopt_encodeMeshlet(
+    buffer: ?[*]u8,
+    buffer_size: usize,
+    vertices: ?[*]const u32,
+    vertex_count: usize,
+    triangles: ?[*]const u8,
+    triangle_count: usize,
+) usize {
+    return mo.encodeMeshlet(
+        itemsMut(u8, buffer, buffer_size),
+        items(u32, vertices, vertex_count),
+        items(u8, triangles, triangle_count * 3),
+    ) catch 0;
+}
+
+export fn meshopt_encodeMeshletBound(max_vertices: usize, max_triangles: usize) usize {
+    return mo.encodeMeshletBound(max_vertices, max_triangles);
+}
+
+/// The `count` items of `size` bytes at `ptr`, rounded up to 4 bytes, as
+/// `T`s.
+fn padded(comptime T: type, ptr: ?*anyopaque, count: usize, size: usize) []T {
+    const len = std.mem.alignForward(usize, count * size, 4) / @sizeOf(T);
+    return itemsMut(T, @ptrCast(@alignCast(ptr)), len);
+}
+
+export fn meshopt_decodeMeshlet(
+    vertices: ?*anyopaque,
+    vertex_count: usize,
+    vertex_size: usize,
+    triangles: ?*anyopaque,
+    triangle_count: usize,
+    triangle_size: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int {
+    const encoded = items(u8, buffer, buffer_size);
+    const vc = vertex_count;
+    const tc = triangle_count;
+    return meshletResult(switch (vertex_size) {
+        inline 2, 4 => |vs| switch (triangle_size) {
+            inline 3, 4 => |ts| blk: {
+                const V = if (vs == 2) u16 else u32;
+                const T = if (ts == 3) u8 else u32;
+                break :blk mo.decodeMeshlet(
+                    V,
+                    T,
+                    padded(V, vertices, vc, vs),
+                    vc,
+                    padded(T, triangles, tc, ts),
+                    tc,
+                    encoded,
+                );
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    });
+}
+
+export fn meshopt_decodeMeshletRaw(
+    vertices: ?[*]u32,
+    vertex_count: usize,
+    triangles: ?[*]u32,
+    triangle_count: usize,
+    buffer: ?[*]const u8,
+    buffer_size: usize,
+) c_int {
+    return meshletResult(mo.decodeMeshletRaw(
+        itemsMut(u32, vertices, std.mem.alignForward(usize, vertex_count, 4)),
+        vertex_count,
+        itemsMut(u32, triangles, std.mem.alignForward(usize, triangle_count, 4)),
+        triangle_count,
+        items(u8, buffer, buffer_size),
+    ));
+}
+
+// --------------------------------------------------------
 // Vertex cache optimizer
 // --------------------------------------------------------
 
@@ -873,89 +1059,6 @@ export fn meshopt_spatialClusterPoints(
         floats(vertex_positions, vertex_count, vertex_positions_stride, 3),
         cluster_size,
     ) catch oom();
-}
-
-export fn meshopt_encodeIndexBuffer(_: ?[*]u8, _: usize, _: ?[*]const u32, _: usize) usize {
-    pending("meshopt_encodeIndexBuffer");
-}
-
-export fn meshopt_encodeIndexBufferBound(_: usize, _: usize) usize {
-    pending("meshopt_encodeIndexBufferBound");
-}
-
-export fn meshopt_encodeIndexVersion(_: c_int) void {
-    pending("meshopt_encodeIndexVersion");
-}
-
-export fn meshopt_decodeIndexBuffer(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) c_int {
-    pending("meshopt_decodeIndexBuffer");
-}
-
-export fn meshopt_decodeIndexVersion(_: ?[*]const u8, _: usize) c_int {
-    pending("meshopt_decodeIndexVersion");
-}
-
-export fn meshopt_encodeIndexSequence(_: ?[*]u8, _: usize, _: ?[*]const u32, _: usize) usize {
-    pending("meshopt_encodeIndexSequence");
-}
-
-export fn meshopt_encodeIndexSequenceBound(_: usize, _: usize) usize {
-    pending("meshopt_encodeIndexSequenceBound");
-}
-
-export fn meshopt_decodeIndexSequence(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) c_int {
-    pending("meshopt_decodeIndexSequence");
-}
-
-export fn meshopt_encodeMeshlet(
-    _: ?[*]u8,
-    _: usize,
-    _: ?[*]const u32,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) usize {
-    pending("meshopt_encodeMeshlet");
-}
-
-export fn meshopt_encodeMeshletBound(_: usize, _: usize) usize {
-    pending("meshopt_encodeMeshletBound");
-}
-
-export fn meshopt_decodeMeshlet(
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: ?*anyopaque,
-    _: usize,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) c_int {
-    pending("meshopt_decodeMeshlet");
-}
-
-export fn meshopt_decodeMeshletRaw(
-    _: ?[*]u32,
-    _: usize,
-    _: ?[*]u32,
-    _: usize,
-    _: ?[*]const u8,
-    _: usize,
-) c_int {
-    pending("meshopt_decodeMeshletRaw");
 }
 
 export fn meshopt_encodeVertexBuffer(

@@ -16,4 +16,6 @@ comptime {
     _ = @import("clusterizer_test.zig");
     _ = @import("meshletutils_test.zig");
     _ = @import("partition_test.zig");
+    _ = @import("indexcodec_test.zig");
+    _ = @import("meshletcodec_test.zig");
 }

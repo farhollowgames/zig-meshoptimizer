@@ -302,6 +302,29 @@ pub fn main(init: std.process.Init) !void {
         bench.run("partitionClusters " ++ name, &partition_case);
     }
 
+    // The codecs, on index buffers optimized for the vertex cache and for
+    // vertex fetch, and on the meshlets of those, as they are usually used.
+    // The demo mesh runs many rounds per timing, as one is short.
+    inline for (.{ .{ "pirate", pirate, 100 }, .{ "sphere 1M", big, 1 } }) |named| {
+        const name = named[0];
+        const mesh: meshes.Mesh = named[1];
+        const rounds: usize = named[2];
+        const indices = try cacheAndFetchOptimized(arena, mesh);
+
+        var index_case: IndexCodecCase = try .init(arena, indices, mesh.vertices.len, rounds);
+        bench.run("encodeIndexBuffer " ++ name, &index_case.encode);
+        bench.run("decodeIndexBuffer u32 " ++ name, &index_case.decode32);
+        bench.run("decodeIndexBuffer u16 " ++ name, &index_case.decode16);
+        bench.run("encodeIndexSequence " ++ name, &index_case.encode_sequence);
+        bench.run("decodeIndexSequence " ++ name, &index_case.decode_sequence);
+
+        var meshlet_case: MeshletCodecCase = try .init(arena, mesh, indices, rounds);
+        bench.run("encodeMeshlet " ++ name, &meshlet_case.encode);
+        bench.run("decodeMeshlet u32/u8 " ++ name, &meshlet_case.decode_bytes);
+        bench.run("decodeMeshlet u16/u32 " ++ name, &meshlet_case.decode_words);
+        bench.run("decodeMeshletRaw " ++ name, &meshlet_case.decode_raw);
+    }
+
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
         @as(f64, @floatFromInt(bench.original_total_ns));
     std.debug.print("{s:<44} {d:>10.1} {s:>6} {d:>10.1} {s:>6} {d:>6.2}\n", .{
@@ -1770,5 +1793,312 @@ const PartitionCase = struct {
         ) catch unreachable;
         std.mem.doNotOptimizeAway(partitions);
         std.mem.doNotOptimizeAway(self.destination);
+    }
+};
+
+/// `mesh`'s indices optimized by the original for the vertex cache and
+/// then for vertex fetch.
+fn cacheAndFetchOptimized(arena: std.mem.Allocator, mesh: meshes.Mesh) ![]u32 {
+    const indices = try arena.alloc(u32, mesh.indices.len);
+    const vertex_count = mesh.vertices.len;
+    c.meshopt_optimizeVertexCache(indices.ptr, mesh.indices.ptr, indices.len, vertex_count);
+    const remap = try arena.alloc(u32, vertex_count);
+    _ = c.meshopt_optimizeVertexFetchRemap(remap.ptr, indices.ptr, indices.len, vertex_count);
+    c.meshopt_remapIndexBuffer(indices.ptr, indices.ptr, indices.len, remap.ptr);
+    return indices;
+}
+
+const IndexCodecCase = struct {
+    encode: Encode,
+    decode32: Decode(u32, false),
+    decode16: Decode(u16, false),
+    encode_sequence: Encode,
+    decode_sequence: Decode(u32, true),
+
+    const Encode = struct {
+        indices: []const u32,
+        buffer: []u8,
+        rounds: usize,
+        sequence: bool,
+
+        fn original(self: *Encode) void {
+            const i = self.indices;
+            for (0..self.rounds) |_| {
+                const size = if (self.sequence)
+                    c.meshopt_encodeIndexSequence(self.buffer.ptr, self.buffer.len, i.ptr, i.len)
+                else
+                    c.meshopt_encodeIndexBuffer(self.buffer.ptr, self.buffer.len, i.ptr, i.len);
+                std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
+            }
+        }
+
+        // Calls, not inlined, as the original's are.
+        fn port(self: *Encode) void {
+            const args = .{ self.buffer, self.indices, mo.IndexVersion.default };
+            for (0..self.rounds) |_| {
+                const size = if (self.sequence)
+                    @call(.never_inline, mo.encodeIndexSequence, args)
+                else
+                    @call(.never_inline, mo.encodeIndexBuffer, args);
+                std.mem.doNotOptimizeAway(size catch unreachable);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
+            }
+        }
+    };
+
+    fn Decode(comptime T: type, comptime sequence: bool) type {
+        return struct {
+            stream: []const u8,
+            destination: []T,
+            rounds: usize,
+
+            const Self = @This();
+
+            fn original(self: *Self) void {
+                const d = self.destination;
+                const s = self.stream;
+                for (0..self.rounds) |_| {
+                    const rc = if (sequence)
+                        c.meshopt_decodeIndexSequence(d.ptr, d.len, @sizeOf(T), s.ptr, s.len)
+                    else
+                        c.meshopt_decodeIndexBuffer(d.ptr, d.len, @sizeOf(T), s.ptr, s.len);
+                    std.debug.assert(rc == 0);
+                    std.mem.doNotOptimizeAway(d.ptr);
+                }
+            }
+
+            fn port(self: *Self) void {
+                const decode = if (sequence) mo.decodeIndexSequence else mo.decodeIndexBuffer;
+                for (0..self.rounds) |_| {
+                    @call(.never_inline, decode, .{ T, self.destination, self.stream }) catch
+                        unreachable;
+                    std.mem.doNotOptimizeAway(self.destination.ptr);
+                }
+            }
+        };
+    }
+
+    fn init(
+        arena: std.mem.Allocator,
+        indices: []const u32,
+        vertex_count: usize,
+        rounds: usize,
+    ) !IndexCodecCase {
+        const buffer_bound = c.meshopt_encodeIndexBufferBound(indices.len, vertex_count);
+        const buffer = try arena.alloc(u8, buffer_bound);
+        const size = c.meshopt_encodeIndexBuffer(buffer.ptr, buffer.len, indices.ptr, indices.len);
+        const sequence_bound = c.meshopt_encodeIndexSequenceBound(indices.len, vertex_count);
+        const sequence = try arena.alloc(u8, sequence_bound);
+        const sequence_size = c.meshopt_encodeIndexSequence(
+            sequence.ptr,
+            sequence.len,
+            indices.ptr,
+            indices.len,
+        );
+        const stream = try arena.dupe(u8, buffer[0..size]);
+        const sequence_stream = try arena.dupe(u8, sequence[0..sequence_size]);
+        const halves = try arena.alloc(u16, indices.len);
+        const words = try arena.alloc(u32, indices.len);
+        return .{
+            .encode = .{
+                .indices = indices,
+                .buffer = buffer,
+                .rounds = rounds,
+                .sequence = false,
+            },
+            .decode32 = .{ .stream = stream, .destination = words, .rounds = rounds },
+            .decode16 = .{ .stream = stream, .destination = halves, .rounds = rounds },
+            .encode_sequence = .{
+                .indices = indices,
+                .buffer = sequence,
+                .rounds = rounds,
+                .sequence = true,
+            },
+            .decode_sequence = .{
+                .stream = sequence_stream,
+                .destination = words,
+                .rounds = rounds,
+            },
+        };
+    }
+};
+
+const MeshletCodecCase = struct {
+    encode: Encode,
+    decode_bytes: Decode(u32, u8, false),
+    decode_words: Decode(u16, u32, false),
+    decode_raw: Decode(u32, u32, true),
+
+    const vertices_max = 64;
+    const triangles_max = 96;
+
+    const Encode = struct {
+        meshlets: []const c.Meshlet,
+        vertices: []const u32,
+        triangles: []const u8,
+        buffer: []u8,
+        rounds: usize,
+
+        fn original(self: *Encode) void {
+            for (0..self.rounds) |_| for (self.meshlets) |m| {
+                const size = c.meshopt_encodeMeshlet(
+                    self.buffer.ptr,
+                    self.buffer.len,
+                    self.vertices[m.vertex_offset..].ptr,
+                    m.vertex_count,
+                    self.triangles[m.triangle_offset..].ptr,
+                    m.triangle_count,
+                );
+                std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
+            };
+        }
+
+        fn port(self: *Encode) void {
+            for (0..self.rounds) |_| for (self.meshlets) |m| {
+                const size = @call(.never_inline, mo.encodeMeshlet, .{
+                    self.buffer,
+                    self.vertices[m.vertex_offset..][0..m.vertex_count],
+                    self.triangles[m.triangle_offset..][0 .. m.triangle_count * 3],
+                }) catch unreachable;
+                std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
+            };
+        }
+    };
+
+    /// Each meshlet as its vertex count, triangle count and 2-byte size,
+    /// then its encoding, as the original's codec benchmark packs them.
+    fn Decode(comptime V: type, comptime T: type, comptime raw: bool) type {
+        return struct {
+            packed_meshlets: []const u8,
+            rounds: usize,
+
+            const Self = @This();
+            const triangle_size = if (T == u8) 3 else 4;
+
+            fn original(self: *Self) void {
+                var vertices: [256]V = undefined;
+                var triangles: [256 * 4]T = undefined;
+                for (0..self.rounds) |_| {
+                    var p = self.packed_meshlets;
+                    while (p.len > 0) {
+                        const size = @as(usize, p[2]) | @as(usize, p[3]) << 8;
+                        const rc = if (raw) c.meshopt_decodeMeshletRaw(
+                            &vertices,
+                            p[0],
+                            &triangles,
+                            p[1],
+                            p[4..].ptr,
+                            size,
+                        ) else c.meshopt_decodeMeshlet(
+                            &vertices,
+                            p[0],
+                            @sizeOf(V),
+                            &triangles,
+                            p[1],
+                            triangle_size,
+                            p[4..].ptr,
+                            size,
+                        );
+                        std.debug.assert(rc == 0);
+                        std.mem.doNotOptimizeAway(&vertices);
+                        std.mem.doNotOptimizeAway(&triangles);
+                        p = p[4 + size ..];
+                    }
+                }
+            }
+
+            fn port(self: *Self) void {
+                var vertices: [256]V = undefined;
+                var triangles: [256 * 4]T = undefined;
+                for (0..self.rounds) |_| {
+                    var p = self.packed_meshlets;
+                    while (p.len > 0) {
+                        const size = @as(usize, p[2]) | @as(usize, p[3]) << 8;
+                        const stream = p[4..][0..size];
+                        if (raw) {
+                            mo.decodeMeshletRaw(&vertices, p[0], &triangles, p[1], stream) catch
+                                unreachable;
+                        } else {
+                            mo.decodeMeshlet(V, T, &vertices, p[0], &triangles, p[1], stream) catch
+                                unreachable;
+                        }
+                        std.mem.doNotOptimizeAway(&vertices);
+                        std.mem.doNotOptimizeAway(&triangles);
+                        p = p[4 + size ..];
+                    }
+                }
+            }
+        };
+    }
+
+    fn init(
+        arena: std.mem.Allocator,
+        mesh: meshes.Mesh,
+        indices: []const u32,
+        rounds: usize,
+    ) !MeshletCodecCase {
+        const meshlets_max = c.meshopt_buildMeshletsBound(indices.len, vertices_max, triangles_max);
+        const meshlets = try arena.alloc(c.Meshlet, meshlets_max);
+        const vertices = try arena.alloc(u32, indices.len);
+        const triangles = try arena.alloc(u8, indices.len);
+        const count = c.meshopt_buildMeshlets(
+            meshlets.ptr,
+            vertices.ptr,
+            triangles.ptr,
+            indices.ptr,
+            indices.len,
+            @ptrCast(mesh.vertices.ptr),
+            mesh.vertices.len,
+            @sizeOf(Vertex),
+            vertices_max,
+            triangles_max,
+            0,
+        );
+        for (meshlets[0..count]) |m| {
+            c.meshopt_optimizeMeshletLevel(
+                vertices[m.vertex_offset..].ptr,
+                m.vertex_count,
+                triangles[m.triangle_offset..].ptr,
+                m.triangle_count,
+                3,
+            );
+        }
+
+        const bound = c.meshopt_encodeMeshletBound(vertices_max, triangles_max);
+        const buffer = try arena.alloc(u8, bound);
+        var packed_meshlets: std.ArrayList(u8) = .empty;
+        for (meshlets[0..count]) |m| {
+            const size = c.meshopt_encodeMeshlet(
+                buffer.ptr,
+                buffer.len,
+                vertices[m.vertex_offset..].ptr,
+                m.vertex_count,
+                triangles[m.triangle_offset..].ptr,
+                m.triangle_count,
+            );
+            try packed_meshlets.appendSlice(arena, &.{
+                @intCast(m.vertex_count),
+                @intCast(m.triangle_count),
+                @truncate(size),
+                @truncate(size >> 8),
+            });
+            try packed_meshlets.appendSlice(arena, buffer[0..size]);
+        }
+
+        return .{
+            .encode = .{
+                .meshlets = meshlets[0..count],
+                .vertices = vertices,
+                .triangles = triangles,
+                .buffer = buffer,
+                .rounds = rounds,
+            },
+            .decode_bytes = .{ .packed_meshlets = packed_meshlets.items, .rounds = rounds },
+            .decode_words = .{ .packed_meshlets = packed_meshlets.items, .rounds = rounds },
+            .decode_raw = .{ .packed_meshlets = packed_meshlets.items, .rounds = rounds },
+        };
     }
 };

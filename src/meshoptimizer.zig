@@ -96,6 +96,23 @@ pub const extractMeshletIndices = meshletutils.extractMeshletIndices;
 
 pub const partition = @import("partition.zig");
 pub const partitionClusters = partition.partitionClusters;
+pub const indexcodec = @import("indexcodec.zig");
+pub const IndexVersion = indexcodec.IndexVersion;
+pub const IndexDecodeError = indexcodec.DecodeError;
+pub const encodeIndexBuffer = indexcodec.encodeIndexBuffer;
+pub const encodeIndexBufferBound = indexcodec.encodeIndexBufferBound;
+pub const decodeIndexBuffer = indexcodec.decodeIndexBuffer;
+pub const decodeIndexVersion = indexcodec.decodeIndexVersion;
+pub const encodeIndexSequence = indexcodec.encodeIndexSequence;
+pub const encodeIndexSequenceBound = indexcodec.encodeIndexSequenceBound;
+pub const decodeIndexSequence = indexcodec.decodeIndexSequence;
+
+pub const meshletcodec = @import("meshletcodec.zig");
+pub const MeshletDecodeError = meshletcodec.DecodeError;
+pub const encodeMeshlet = meshletcodec.encodeMeshlet;
+pub const encodeMeshletBound = meshletcodec.encodeMeshletBound;
+pub const decodeMeshlet = meshletcodec.decodeMeshlet;
+pub const decodeMeshletRaw = meshletcodec.decodeMeshletRaw;
 
 test {
     std.testing.refAllDecls(@This());

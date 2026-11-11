@@ -122,6 +122,17 @@ pub fn expectSameValue(comptime T: type, what: []const u8, want: T, got: T) !voi
     return expectSame(T, what, &.{want}, &.{got});
 }
 
+/// The rotation of `triangle` that sorts first: the codecs keep each
+/// triangle's winding but may rotate it.
+pub fn canonicalTriangle(comptime T: type, triangle: [3]T) [3]T {
+    const a, const b, const c_ = triangle;
+    var best = triangle;
+    for ([_][3]T{ .{ b, c_, a }, .{ c_, a, b } }) |rotated| {
+        if (std.mem.order(T, &rotated, &best) == .lt) best = rotated;
+    }
+    return best;
+}
+
 /// Fails unless the structs `want` and `got` have the same value in every
 /// field of `want`'s type, compared as `expectSame` does.
 pub fn expectSameFields(want: anytype, got: anytype) !void {
@@ -254,4 +265,28 @@ pub fn strided(points: []const f32, stride: usize) ![]f32 {
     @memset(result, std.math.nan(f32));
     for (0..count) |i| result[i * stride ..][0..3].* = points[i * 3 ..][0..3].*;
     return result;
+}
+
+/// The byte every output is filled with before a second run of the port,
+/// which differs from the first run's fill.
+pub const rerun_fill = 0x55;
+
+/// Fails unless a rerun of the port into an output filled with
+/// `rerun_fill` wrote what the first run did: each byte is the same, or
+/// left at its fill in both runs.
+pub fn expectSameRerun(
+    comptime T: type,
+    what: []const u8,
+    first: []const T,
+    first_fill: u8,
+    rerun: []const T,
+) !void {
+    const a = std.mem.sliceAsBytes(first);
+    const b = std.mem.sliceAsBytes(rerun);
+    std.debug.assert(a.len == b.len);
+    for (a, b, 0..) |x, y, i| {
+        if (x == y or (x == first_fill and y == rerun_fill)) continue;
+        std.debug.print("{s}: byte {d} differs on a rerun: {x} then {x}\n", .{ what, i, x, y });
+        return error.Mismatch;
+    }
 }
