@@ -1,10 +1,12 @@
 //! The meshlet codec against the original: the encoder byte for byte on
 //! the original clusterizer's meshlets of every test mesh, at every
-//! optimization level, and on random meshlets of every size; the decoder,
-//! for each vertex and triangle size and raw, on those streams and on
-//! truncated, corrupted and random buffers, with the same return codes and
-//! the same output, padding included. The SIMD path is checked against the
-//! original's SIMD build and the scalar path against its scalar build.
+//! optimization level, on edge cases, and on fuzzed meshlets of every size;
+//! the decoder, for each vertex and triangle size and raw, on those streams
+//! and on truncated, corrupted and fuzzed bytes, with the same return codes
+//! and the same output, padding included. The SIMD path is checked against
+//! the original's SIMD build and the scalar path against its scalar build.
+//! Every port call runs twice, into outputs filled differently, and must
+//! write the same.
 
 const std = @import("std");
 const mo = @import("meshoptimizer");
@@ -48,28 +50,42 @@ test "encodeMeshlet and decodeMeshlet match the original on clustered meshes" {
     }
 }
 
-test "encodeMeshlet and decodeMeshlet match the original on random meshlets" {
-    for (0..400) |seed| {
+test "encodeMeshlet and decodeMeshlet match the original on fuzzed meshlets" {
+    try common.fuzz("encodeMeshlet", 0, fuzzMeshlet);
+}
+
+fn fuzzMeshlet(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var vertices: [256]u32 = undefined;
+    var triangles: [256 * 3]u8 = undefined;
+    const meshlet = randomMeshlet(rng, seed, &vertices, &triangles);
+    try checkMeshlet(meshlet.vertices, meshlet.triangles, false);
+}
+
+test "encodeMeshlet and decodeMeshlet match the original on edge cases" {
+    // Empty, one vertex or triangle, around the 4-wide groups and 16-byte
+    // tail, and the maximum of 256 vertices and 256 triangles; the small
+    // and the largest also truncated and corrupted.
+    const sizes = [_]usize{ 0, 1, 2, 3, 4, 5, 7, 8, 63, 64, 65, 255, 256 };
+    var seed: u64 = 0;
+    for (sizes) |vertex_count| for (sizes) |triangle_count| {
+        seed += 1;
         var prng: std.Random.DefaultPrng = .init(seed);
         const rng = prng.random();
-
-        const sizes = [_]usize{ 0, 1, 2, 3, 4, 5, 7, 8, 63, 64, 65, 255, 256 };
-        const vertex_count = if (seed < sizes.len * 2)
-            sizes[seed % sizes.len]
-        else
-            rng.uintAtMost(usize, 256);
-        const triangle_count = if (seed < sizes.len * 2)
-            sizes[(seed / 2) % sizes.len]
-        else
-            rng.uintAtMost(usize, 256);
-
         var vertices: [256]u32 = undefined;
         randomVertices(rng, vertices[0..vertex_count], seed % 6);
         var triangles: [256 * 3]u8 = undefined;
         randomTriangles(rng, triangles[0 .. triangle_count * 3], vertex_count, seed % 5);
+        const malformed = (vertex_count <= 5 and triangle_count <= 5) or
+            (vertex_count == 256 and triangle_count == 256);
+        try checkMeshlet(vertices[0..vertex_count], triangles[0 .. triangle_count * 3], malformed);
+    };
 
-        try checkMeshlet(vertices[0..vertex_count], triangles[0 .. triangle_count * 3], seed < 60);
-    }
+    // The largest vertex differences, which take 4 bytes for a whole group.
+    const far = [_]u32{ 0, 0xffff_ffff, 0x8000_0000, 0x7fff_ffff, 1, 0xffff_fffe };
+    const one = [_]u8{ 0, 1, 2 };
+    try checkMeshlet(&far, &one, true);
 }
 
 test "encodeMeshletBound matches the original" {
@@ -83,21 +99,72 @@ test "encodeMeshletBound matches the original" {
     };
 }
 
-test "decodeMeshlet matches the original on random buffers" {
-    var prng: std.Random.DefaultPrng = .init(0x3e5d1e7);
+test "decodeMeshlet matches the original on truncated streams" {
+    try common.fuzz("decodeMeshlet truncated", 0, fuzzTruncatedMeshlet);
+}
+
+fn fuzzTruncatedMeshlet(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var stream: [4096]u8 = undefined;
+    const encoded = encodedMeshlet(rng, seed, &stream);
+    const len = rng.uintLessThan(usize, encoded.stream.len);
+    // Cut from the end, from the start, or both.
+    const start = switch (rng.uintLessThan(u32, 3)) {
+        0 => 0,
+        1 => encoded.stream.len - len,
+        else => rng.uintAtMost(usize, encoded.stream.len - len),
+    };
+    const vc = encoded.vertex_count;
+    const tc = encoded.triangle_count;
+    try checkDecode(encoded.stream[start..][0..len], vc, tc);
+}
+
+test "decodeMeshlet matches the original on corrupted streams" {
+    try common.fuzz("decodeMeshlet corrupted", 0, fuzzCorruptedMeshlet);
+}
+
+fn fuzzCorruptedMeshlet(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    var stream: [4096]u8 = undefined;
+    const encoded = encodedMeshlet(rng, seed, &stream);
+    const bytes = stream[0..encoded.stream.len];
+    // One to four bytes changed, and sometimes other counts.
+    for (0..1 + rng.uintLessThan(usize, 4)) |_| {
+        bytes[rng.uintLessThan(usize, bytes.len)] ^= 1 + rng.uintLessThan(u8, 255);
+    }
+    var vc = encoded.vertex_count;
+    var tc = encoded.triangle_count;
+    if (rng.uintLessThan(u32, 4) == 0) {
+        const delta = 1 + rng.uintLessThan(usize, 4);
+        switch (rng.uintLessThan(u32, 4)) {
+            0 => vc = @min(vc + delta, 256),
+            1 => vc -|= delta,
+            2 => tc = @min(tc + delta, 256),
+            else => tc -|= delta,
+        }
+    }
+    try checkDecode(bytes, vc, tc);
+}
+
+test "decodeMeshlet matches the original on fuzzed bytes" {
+    try common.fuzz("decodeMeshlet fuzzed", 0, fuzzBytesMeshlet);
+}
+
+fn fuzzBytesMeshlet(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
     const rng = prng.random();
     var buffer: [1600]u8 = undefined;
-    for (0..6000) |i| {
-        const vertex_count = if (i % 4 == 0) 0 else rng.uintAtMost(usize, 256);
-        const triangle_count = rng.uintAtMost(usize, 256);
-        const len = rng.uintLessThan(usize, buffer.len);
-        rng.bytes(buffer[0..len]);
-        // Sparse bytes too, which decode further before running out.
-        if (rng.boolean()) {
-            for (buffer[0..len]) |*b| b.* &= rng.int(u8) & rng.int(u8);
-        }
-        try checkDecode(buffer[0..len], vertex_count, triangle_count);
+    const vertex_count = if (seed % 4 == 0) 0 else rng.uintAtMost(usize, 256);
+    const triangle_count = rng.uintAtMost(usize, 256);
+    const len = rng.uintLessThan(usize, buffer.len);
+    rng.bytes(buffer[0..len]);
+    // Sparse bytes too, which decode further before running out.
+    if (rng.boolean()) {
+        for (buffer[0..len]) |*b| b.* &= rng.int(u8) & rng.int(u8);
     }
+    try checkDecode(buffer[0..len], vertex_count, triangle_count);
 }
 
 // --------------------------------------------------------
@@ -150,6 +217,49 @@ fn checkClusters(
         // Every other meshlet without its vertex references.
         try checkMeshlet(if (i % 2 == 0) vertices else &.{}, triangles, malformed and i < 8);
     }
+}
+
+const Meshlet = struct { vertices: []const u32, triangles: []const u8 };
+
+/// A meshlet of up to 256 vertices and 256 triangles, of the kinds `seed`
+/// picks, in `vertices` and `triangles`.
+fn randomMeshlet(
+    rng: std.Random,
+    seed: u64,
+    vertices: *[256]u32,
+    triangles: *[256 * 3]u8,
+) Meshlet {
+    const vertex_count = rng.uintAtMost(usize, 256);
+    const triangle_count = rng.uintAtMost(usize, 256);
+    randomVertices(rng, vertices[0..vertex_count], seed % 6);
+    randomTriangles(rng, triangles[0 .. triangle_count * 3], vertex_count, (seed / 6) % 5);
+    return .{
+        .vertices = vertices[0..vertex_count],
+        .triangles = triangles[0 .. triangle_count * 3],
+    };
+}
+
+const Encoded = struct { stream: []const u8, vertex_count: usize, triangle_count: usize };
+
+/// A random meshlet encoded by the original into `stream`.
+fn encodedMeshlet(rng: std.Random, seed: u64, stream: *[4096]u8) Encoded {
+    var vertices: [256]u32 = undefined;
+    var triangles: [256 * 3]u8 = undefined;
+    const meshlet = randomMeshlet(rng, seed, &vertices, &triangles);
+    const triangle_count = meshlet.triangles.len / 3;
+    const size = c.meshopt_encodeMeshlet(
+        stream,
+        stream.len,
+        meshlet.vertices.ptr,
+        meshlet.vertices.len,
+        meshlet.triangles.ptr,
+        triangle_count,
+    );
+    return .{
+        .stream = stream[0..size],
+        .vertex_count = meshlet.vertices.len,
+        .triangle_count = triangle_count,
+    };
 }
 
 /// Vertex references of one of several kinds: increasing by small steps,
@@ -235,9 +345,15 @@ fn checkMeshlet(vertices: []const u32, triangles: []const u8, malformed: bool) !
         triangles.ptr,
         triangle_count,
     );
+    @memset(got[0..bound], 0xa5);
     const got_size = mo.encodeMeshlet(got[0..bound], vertices, triangles) catch 0;
     try common.expectSameValue(usize, "encodeMeshlet size", want_size, got_size);
     try common.expectSame(u8, "encodeMeshlet", want[0..want_size], got[0..got_size]);
+
+    var rerun: [4096]u8 = @splat(common.rerun_fill);
+    const rerun_size = mo.encodeMeshlet(rerun[0..bound], vertices, triangles) catch 0;
+    try common.expectSameValue(usize, "encodeMeshlet rerun size", got_size, rerun_size);
+    try common.expectSameRerun(u8, "encodeMeshlet rerun", got[0..bound], 0xa5, rerun[0..bound]);
 
     // The original's own scalar build encodes the same.
     var scalar: [4096]u8 = undefined;
@@ -397,6 +513,33 @@ fn checkDecodeAs(
         &want_triangles,
         &got_triangles,
     );
+
+    var rerun_vertices: [256]V = @splat(@truncate(0x5555_5555));
+    var rerun_triangles: [256 * 4]T = @splat(@truncate(0x5555_5555));
+    const rerun_rc = resultCode(port(
+        V,
+        T,
+        rerun_vertices[0..vertex_len],
+        vertex_count,
+        rerun_triangles[0..triangle_len],
+        triangle_count,
+        buffer,
+    ));
+    try common.expectSameValue(c_int, "decodeMeshlet rerun (" ++ what ++ ")", got_rc, rerun_rc);
+    try common.expectSameRerun(
+        V,
+        "decodeMeshlet vertices rerun",
+        &got_vertices,
+        0xa5,
+        &rerun_vertices,
+    );
+    try common.expectSameRerun(
+        T,
+        "decodeMeshlet triangles rerun",
+        &got_triangles,
+        0x5a,
+        &rerun_triangles,
+    );
 }
 
 fn checkDecodeRaw(
@@ -450,6 +593,31 @@ fn checkDecodeRaw(
         "decodeMeshletRaw triangles (" ++ what ++ ")",
         &want_triangles,
         &got_triangles,
+    );
+
+    var rerun_vertices: [256]u32 = @splat(0x5555_5555);
+    var rerun_triangles: [256]u32 = @splat(0x5555_5555);
+    const rerun_rc = resultCode(port(
+        rerun_vertices[0..vertex_len],
+        vertex_count,
+        rerun_triangles[0..triangle_len],
+        triangle_count,
+        buffer,
+    ));
+    try common.expectSameValue(c_int, "decodeMeshletRaw rerun (" ++ what ++ ")", got_rc, rerun_rc);
+    try common.expectSameRerun(
+        u32,
+        "decodeMeshletRaw vertices rerun",
+        &got_vertices,
+        0xa5,
+        &rerun_vertices,
+    );
+    try common.expectSameRerun(
+        u32,
+        "decodeMeshletRaw triangles rerun",
+        &got_triangles,
+        0x5a,
+        &rerun_triangles,
     );
 }
 

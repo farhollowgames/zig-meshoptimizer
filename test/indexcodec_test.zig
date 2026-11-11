@@ -1,8 +1,10 @@
 //! The index codec against the original: the encoders byte for byte in
 //! both versions, on every test mesh as it is, optimized for the vertex
-//! cache and for vertex fetch, and on generated and random index buffers;
-//! the decoders on those streams and on truncated, corrupted and random
-//! buffers, with the same return codes and the same output.
+//! cache and for vertex fetch, on generated buffers and edge cases, and on
+//! fuzzed index buffers; the decoders on those streams and on truncated,
+//! corrupted and fuzzed bytes, with the same return codes and the same
+//! output. Every port call runs twice, into outputs filled differently,
+//! and must write the same.
 
 const std = @import("std");
 const mo = @import("meshoptimizer");
@@ -90,29 +92,40 @@ test "encodeIndexBuffer and decodeIndexBuffer match the original on generated bu
     try checkIndexBuffer(&.{}, 0, .{ .malformed = true });
 }
 
-test "encodeIndexBuffer and decodeIndexBuffer match the original on random buffers" {
-    for (0..48) |seed| {
-        var prng: std.Random.DefaultPrng = .init(seed);
-        const rng = prng.random();
-        const triangle_count = rng.uintLessThan(usize, 600);
-        const vertex_count: u64 = switch (seed % 4) {
-            0 => 3 + rng.uintLessThan(u64, 30),
-            1 => 3 + rng.uintLessThan(u64, 1000),
-            2 => 3 + rng.uintLessThan(u64, 1 << 20),
-            else => 1 << 32,
-        };
-        const indices = try gpa.alloc(u32, triangle_count * 3);
-        defer gpa.free(indices);
-        for (indices, 0..) |*index, i| {
-            // Mostly near the last ones, as real buffers are, so the
-            // fifos hit.
-            index.* = if (i > 0 and rng.uintLessThan(u32, 4) != 0)
-                indices[i - 1 - rng.uintLessThan(usize, @min(i, 12))]
-            else
-                @intCast(rng.uintLessThan(u64, vertex_count));
-        }
-        try checkIndexBuffer(indices, vertex_count, .{ .malformed = triangle_count < 200 });
+test "encodeIndexBuffer and decodeIndexBuffer match the original on fuzzed index buffers" {
+    try common.fuzz("encodeIndexBuffer", 0, fuzzIndexBuffer);
+}
+
+fn fuzzIndexBuffer(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const indices, const vertex_count = try randomIndexBuffer(rng, seed);
+    defer gpa.free(indices);
+    try checkIndexBuffer(indices, vertex_count, .{});
+}
+
+test "encodeIndexBuffer and decodeIndexBuffer match the original on edge cases" {
+    // One triangle: distinct, degenerate, the same vertex three times, and
+    // at the top of 32 bits.
+    const one = [_][3]u32{
+        .{ 0, 1, 2 },                               .{ 2, 1, 0 }, .{ 0, 0, 1 },
+        .{ 7, 7, 7 },                               .{ 5, 3, 9 }, .{ 0xffff_ffff, 0, 0x8000_0000 },
+        .{ 0xffff_ffff, 0xffff_fffe, 0xffff_fffd },
+    };
+    for (one) |triangle| try checkIndexBuffer(&triangle, 1 << 32, .{ .malformed = true });
+
+    // A large buffer, whose varints and fifo indices take every width.
+    var prng: std.Random.DefaultPrng = .init(0xb16);
+    const rng = prng.random();
+    const large = try gpa.alloc(u32, 3 * 300_000);
+    defer gpa.free(large);
+    for (large, 0..) |*index, i| {
+        index.* = if (i > 0 and rng.uintLessThan(u32, 4) != 0)
+            large[i - 1 - rng.uintLessThan(usize, @min(i, 12))]
+        else
+            rng.int(u32);
     }
+    try checkIndexBuffer(large, 1 << 32, .{});
 }
 
 test "encodeIndexBufferBound and encodeIndexSequenceBound match the original" {
@@ -154,18 +167,63 @@ test "decodeIndexVersion matches the original on every header" {
     }
 }
 
-test "decodeIndexBuffer matches the original on random buffers" {
-    var prng: std.Random.DefaultPrng = .init(0xdec0de);
+test "decodeIndexBuffer matches the original on truncated streams" {
+    try common.fuzz("decodeIndexBuffer truncated", 0, fuzzTruncatedIndexBuffer);
+}
+
+fn fuzzTruncatedIndexBuffer(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const stream, const index_count = try encodedIndexBuffer(rng, seed);
+    defer gpa.free(stream);
+    for (0..4) |_| {
+        // Cut from the end, from the start, or both.
+        const len = rng.uintLessThan(usize, stream.len);
+        const start = switch (rng.uintLessThan(u32, 3)) {
+            0 => 0,
+            1 => stream.len - len,
+            else => rng.uintAtMost(usize, stream.len - len),
+        };
+        try checkDecodeIndexBuffer(stream[start..][0..len], index_count);
+    }
+}
+
+test "decodeIndexBuffer matches the original on corrupted streams" {
+    try common.fuzz("decodeIndexBuffer corrupted", 0, fuzzCorruptedIndexBuffer);
+}
+
+fn fuzzCorruptedIndexBuffer(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const stream, var index_count = try encodedIndexBuffer(rng, seed);
+    defer gpa.free(stream);
+    // One to four bytes changed, and sometimes the wrong index count.
+    for (0..1 + rng.uintLessThan(usize, 4)) |_| {
+        stream[rng.uintLessThan(usize, stream.len)] ^= 1 + rng.uintLessThan(u8, 255);
+    }
+    if (rng.uintLessThan(u32, 4) == 0) {
+        index_count = if (index_count > 0 and rng.boolean())
+            index_count - 3
+        else
+            index_count + 3;
+    }
+    try checkDecodeIndexBuffer(stream, index_count);
+}
+
+test "decodeIndexBuffer matches the original on fuzzed bytes" {
+    try common.fuzz("decodeIndexBuffer fuzzed", 0, fuzzBytesIndexBuffer);
+}
+
+fn fuzzBytesIndexBuffer(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
     const rng = prng.random();
     var buffer: [600]u8 = undefined;
-    for (0..4000) |_| {
-        const len = rng.uintLessThan(usize, buffer.len);
-        rng.bytes(buffer[0..len]);
-        // Mostly a valid header, so decoding gets past it.
-        if (len > 0 and rng.uintLessThan(u32, 8) != 0) buffer[0] = 0xe0 | rng.uintLessThan(u8, 2);
-        const index_count = 3 * rng.uintLessThan(usize, 200);
-        try checkDecodeIndexBuffer(buffer[0..len], index_count);
-    }
+    const len = rng.uintLessThan(usize, buffer.len);
+    rng.bytes(buffer[0..len]);
+    // Mostly a valid header, so decoding gets past it.
+    if (len > 0 and rng.uintLessThan(u32, 8) != 0) buffer[0] = 0xe0 | rng.uintLessThan(u8, 2);
+    const index_count = 3 * rng.uintLessThan(usize, 200);
+    try checkDecodeIndexBuffer(buffer[0..len], index_count);
 }
 
 test "encodeIndexSequence and decodeIndexSequence match the original on every mesh" {
@@ -221,22 +279,96 @@ test "encodeIndexSequence and decodeIndexSequence match the original on generate
     try checkIndexSequence(&.{}, 0, true);
 }
 
-test "decodeIndexSequence matches the original on random buffers" {
-    var prng: std.Random.DefaultPrng = .init(0x5e9dec);
+test "encodeIndexSequence and decodeIndexSequence match the original on fuzzed sequences" {
+    try common.fuzz("encodeIndexSequence", 0, fuzzIndexSequence);
+}
+
+fn fuzzIndexSequence(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const sequence, const vertex_count = try randomIndexSequence(rng, seed);
+    defer gpa.free(sequence);
+    try checkIndexSequence(sequence, vertex_count, false);
+}
+
+test "encodeIndexSequence and decodeIndexSequence match the original on edge cases" {
+    // One index, and two, at either end of 32 bits.
+    for ([_]u32{ 0, 1, 31, 0x7fff_ffff, 0xffff_ffff }) |index| {
+        try checkIndexSequence(&.{index}, 1 << 32, true);
+        try checkIndexSequence(&.{ index, 0 }, 1 << 32, true);
+        try checkIndexSequence(&.{ 0xffff_ffff, index }, 1 << 32, true);
+    }
+
+    // A large sequence, with differences of every varint width.
+    var prng: std.Random.DefaultPrng = .init(0xb16);
+    const rng = prng.random();
+    const large = try gpa.alloc(u32, 1_000_000);
+    defer gpa.free(large);
+    var last: u32 = 0;
+    for (large) |*index| {
+        const width: u5 = @intCast(rng.uintLessThan(u32, 30));
+        last +%= @bitCast(rng.intRangeAtMost(i32, -(@as(i32, 1) << width), @as(i32, 1) << width));
+        index.* = last;
+    }
+    try checkIndexSequence(large, 1 << 32, false);
+}
+
+test "decodeIndexSequence matches the original on truncated streams" {
+    try common.fuzz("decodeIndexSequence truncated", 0, fuzzTruncatedIndexSequence);
+}
+
+fn fuzzTruncatedIndexSequence(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const stream, const index_count = try encodedIndexSequence(rng, seed);
+    defer gpa.free(stream);
+    for (0..4) |_| {
+        const len = rng.uintLessThan(usize, stream.len);
+        const start = switch (rng.uintLessThan(u32, 3)) {
+            0 => 0,
+            1 => stream.len - len,
+            else => rng.uintAtMost(usize, stream.len - len),
+        };
+        try checkDecodeIndexSequence(stream[start..][0..len], index_count);
+    }
+}
+
+test "decodeIndexSequence matches the original on corrupted streams" {
+    try common.fuzz("decodeIndexSequence corrupted", 0, fuzzCorruptedIndexSequence);
+}
+
+fn fuzzCorruptedIndexSequence(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rng = prng.random();
+    const stream, var index_count = try encodedIndexSequence(rng, seed);
+    defer gpa.free(stream);
+    for (0..1 + rng.uintLessThan(usize, 4)) |_| {
+        stream[rng.uintLessThan(usize, stream.len)] ^= 1 + rng.uintLessThan(u8, 255);
+    }
+    if (rng.uintLessThan(u32, 4) == 0) {
+        index_count = if (index_count > 0 and rng.boolean()) index_count - 1 else index_count + 1;
+    }
+    try checkDecodeIndexSequence(stream, index_count);
+}
+
+test "decodeIndexSequence matches the original on fuzzed bytes" {
+    try common.fuzz("decodeIndexSequence fuzzed", 0, fuzzBytesIndexSequence);
+}
+
+fn fuzzBytesIndexSequence(seed: u64) !void {
+    var prng: std.Random.DefaultPrng = .init(seed);
     const rng = prng.random();
     var buffer: [400]u8 = undefined;
-    for (0..4000) |_| {
-        const len = rng.uintLessThan(usize, buffer.len);
-        rng.bytes(buffer[0..len]);
-        // Mostly a valid header, and mostly one-byte varints, so decoding
-        // gets past them.
-        if (len > 0 and rng.uintLessThan(u32, 8) != 0) buffer[0] = 0xd0 | rng.uintLessThan(u8, 2);
-        if (rng.boolean()) {
-            for (buffer[@min(len, 1)..len]) |*b| b.* &= 0x7f | (rng.int(u8) & rng.int(u8) & 0x80);
-        }
-        const index_count = rng.uintLessThan(usize, 300);
-        try checkDecodeIndexSequence(buffer[0..len], index_count);
+    const len = rng.uintLessThan(usize, buffer.len);
+    rng.bytes(buffer[0..len]);
+    // Mostly a valid header, and mostly one-byte varints, so decoding
+    // gets past them.
+    if (len > 0 and rng.uintLessThan(u32, 8) != 0) buffer[0] = 0xd0 | rng.uintLessThan(u8, 2);
+    if (rng.boolean()) {
+        for (buffer[@min(len, 1)..len]) |*b| b.* &= 0x7f | (rng.int(u8) & rng.int(u8) & 0x80);
     }
+    const index_count = rng.uintLessThan(usize, 300);
+    try checkDecodeIndexSequence(buffer[0..len], index_count);
 }
 
 // --------------------------------------------------------
@@ -262,6 +394,75 @@ fn strip(rng: std.Random, triangle_count: usize, run: u32) ![]u32 {
     return indices;
 }
 
+/// An index buffer of up to 600 triangles over a vertex count picked by
+/// `seed`, its indices mostly near the last ones, as real buffers are, so
+/// the fifos hit.
+fn randomIndexBuffer(rng: std.Random, seed: u64) !struct { []u32, u64 } {
+    const triangle_count = rng.uintLessThan(usize, 600);
+    const vertex_count: u64 = switch (seed % 4) {
+        0 => 3 + rng.uintLessThan(u64, 30),
+        1 => 3 + rng.uintLessThan(u64, 1000),
+        2 => 3 + rng.uintLessThan(u64, 1 << 20),
+        else => 1 << 32,
+    };
+    const indices = try gpa.alloc(u32, triangle_count * 3);
+    for (indices, 0..) |*index, i| {
+        index.* = if (i > 0 and rng.uintLessThan(u32, 4) != 0)
+            indices[i - 1 - rng.uintLessThan(usize, @min(i, 12))]
+        else
+            @intCast(rng.uintLessThan(u64, vertex_count));
+    }
+    return .{ indices, vertex_count };
+}
+
+/// A sequence of up to 500 indices: two interleaved runs, as from strips
+/// or lines, or uniformly random in a range picked by `seed`.
+fn randomIndexSequence(rng: std.Random, seed: u64) !struct { []u32, u64 } {
+    const count = rng.uintLessThan(usize, 500);
+    const sequence = try gpa.alloc(u32, count);
+    if (seed % 2 == 0) {
+        var runs: [2]u32 = .{ rng.int(u32) >> 4, rng.int(u32) >> 4 };
+        for (sequence) |*index| {
+            const run = rng.uintLessThan(usize, 2);
+            runs[run] +%= @bitCast(rng.intRangeAtMost(i32, -40, 40));
+            index.* = runs[run];
+        }
+        return .{ sequence, 1 << 32 };
+    }
+    const range: u64 = @as(u64, 1) << @intCast(4 + (seed / 2) % 8 * 4);
+    for (sequence) |*index| index.* = @intCast(rng.uintLessThan(u64, range));
+    return .{ sequence, range };
+}
+
+/// A random index buffer encoded by the original, in the version `seed`
+/// picks, and its index count; at least one byte long.
+fn encodedIndexBuffer(rng: std.Random, seed: u64) !struct { []u8, usize } {
+    defer c.meshopt_encodeIndexVersion(1);
+    const indices, const vertex_count = try randomIndexBuffer(rng, seed / 4);
+    defer gpa.free(indices);
+    c.meshopt_encodeIndexVersion(@intCast(seed % 2));
+    const stream = try gpa.alloc(u8, c.meshopt_encodeIndexBufferBound(indices.len, vertex_count));
+    errdefer gpa.free(stream);
+    const size = c.meshopt_encodeIndexBuffer(stream.ptr, stream.len, indices.ptr, indices.len);
+    return .{ try gpa.realloc(stream, size), indices.len };
+}
+
+/// A random index sequence encoded by the original, in the version `seed`
+/// picks, and its index count; at least one byte long.
+fn encodedIndexSequence(rng: std.Random, seed: u64) !struct { []u8, usize } {
+    defer c.meshopt_encodeIndexVersion(1);
+    const sequence, const vertex_count = try randomIndexSequence(rng, seed / 2);
+    defer gpa.free(sequence);
+    c.meshopt_encodeIndexVersion(@intCast(seed % 2));
+    // Room for differences the bound does not count on.
+    const bound = c.meshopt_encodeIndexSequenceBound(sequence.len, vertex_count);
+    const capacity = bound + sequence.len * 5;
+    const stream = try gpa.alloc(u8, capacity);
+    errdefer gpa.free(stream);
+    const size = c.meshopt_encodeIndexSequence(stream.ptr, stream.len, sequence.ptr, sequence.len);
+    return .{ try gpa.realloc(stream, size), sequence.len };
+}
+
 /// Encodes `indices` with both, in each version, into buffers of the
 /// bound's size and of sizes around the encoded size, then decodes the
 /// stream with both.
@@ -285,9 +486,11 @@ fn checkIndexBuffer(indices: []const u32, vertex_count: u64, options: CheckOptio
         c.meshopt_encodeIndexVersion(@backingInt(version));
 
         const want_size = c.meshopt_encodeIndexBuffer(want.ptr, want.len, indices.ptr, indices.len);
+        @memset(got, 0xa5);
         const got_size = mo.encodeIndexBuffer(got, indices, version) catch 0;
         try common.expectSameValue(usize, "encodeIndexBuffer size", want_size, got_size);
         try common.expectSame(u8, "encodeIndexBuffer", want[0..want_size], got[0..got_size]);
+        try expectSameEncodeRerun(mo.encodeIndexBuffer, indices, version, got, got_size);
 
         // Buffers too small, just big enough, and in between.
         const sizes = [_]usize{
@@ -371,6 +574,11 @@ fn checkDecodeIndexBuffer(buffer: []const u8, index_count: usize) !void {
         const got_rc = resultCode(mo.decodeIndexBuffer(T, got, buffer));
         try common.expectSameValue(c_int, "decodeIndexBuffer result", want_rc, got_rc);
         try common.expectSame(T, "decodeIndexBuffer", want, got);
+
+        @memset(want, @truncate(0x5555_5555));
+        const rerun_rc = resultCode(mo.decodeIndexBuffer(T, want, buffer));
+        try common.expectSameValue(c_int, "decodeIndexBuffer rerun result", got_rc, rerun_rc);
+        try common.expectSameRerun(T, "decodeIndexBuffer", got, 0xa5, want);
     }
 }
 
@@ -401,9 +609,11 @@ fn checkIndexSequence(indices: []const u32, vertex_count: u64, malformed: bool) 
             indices.ptr,
             indices.len,
         );
+        @memset(got, 0xa5);
         const got_size = mo.encodeIndexSequence(got, indices, version) catch 0;
         try common.expectSameValue(usize, "encodeIndexSequence size", want_size, got_size);
         try common.expectSame(u8, "encodeIndexSequence", want[0..want_size], got[0..got_size]);
+        try expectSameEncodeRerun(mo.encodeIndexSequence, indices, version, got, got_size);
 
         const sizes = [_]usize{
             0,
@@ -470,7 +680,30 @@ fn checkDecodeIndexSequence(buffer: []const u8, index_count: usize) !void {
         const got_rc = resultCode(mo.decodeIndexSequence(T, got, buffer));
         try common.expectSameValue(c_int, "decodeIndexSequence result", want_rc, got_rc);
         try common.expectSame(T, "decodeIndexSequence", want, got);
+
+        @memset(want, @truncate(0x5555_5555));
+        const rerun_rc = resultCode(mo.decodeIndexSequence(T, want, buffer));
+        try common.expectSameValue(c_int, "decodeIndexSequence rerun result", got_rc, rerun_rc);
+        try common.expectSameRerun(T, "decodeIndexSequence", got, 0xa5, want);
     }
+}
+
+/// Runs `encode` again into a buffer filled with the rerun fill, and fails
+/// unless it gives `size` and writes what the first run, into `first`
+/// filled with 0xa5, did.
+fn expectSameEncodeRerun(
+    encode: fn ([]u8, []const u32, mo.IndexVersion) error{NoSpaceLeft}!usize,
+    indices: []const u32,
+    version: mo.IndexVersion,
+    first: []const u8,
+    size: usize,
+) !void {
+    const rerun = try gpa.alloc(u8, first.len);
+    defer gpa.free(rerun);
+    @memset(rerun, common.rerun_fill);
+    const rerun_size = encode(rerun, indices, version) catch 0;
+    try common.expectSameValue(usize, "encode rerun size", size, rerun_size);
+    try common.expectSameRerun(u8, "encode rerun", first, 0xa5, rerun);
 }
 
 /// The original's return code for a decoder's result.

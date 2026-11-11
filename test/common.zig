@@ -124,3 +124,42 @@ pub fn canonicalTriangle(comptime T: type, triangle: [3]T) [3]T {
     }
     return best;
 }
+
+/// How many cases every fuzz test runs.
+pub const fuzz_cases = 1000;
+
+/// Runs `check` on `fuzz_cases` seeds from `first_seed`, each case building its inputs
+/// from its own seed, and prints the seed of the case that fails.
+pub fn fuzz(name: []const u8, first_seed: u64, check: *const fn (seed: u64) anyerror!void) !void {
+    for (0..fuzz_cases) |i| {
+        const seed = first_seed + i;
+        check(seed) catch |err| {
+            std.debug.print("{s}: failed at seed {d}\n", .{ name, seed });
+            return err;
+        };
+    }
+}
+
+/// The byte every output is filled with before a second run of the port,
+/// which differs from the first run's fill.
+pub const rerun_fill = 0x55;
+
+/// Fails unless a rerun of the port into an output filled with
+/// `rerun_fill` wrote what the first run did: each byte is the same, or
+/// left at its fill in both runs.
+pub fn expectSameRerun(
+    comptime T: type,
+    what: []const u8,
+    first: []const T,
+    first_fill: u8,
+    rerun: []const T,
+) !void {
+    const a = std.mem.sliceAsBytes(first);
+    const b = std.mem.sliceAsBytes(rerun);
+    std.debug.assert(a.len == b.len);
+    for (a, b, 0..) |x, y, i| {
+        if (x == y or (x == first_fill and y == rerun_fill)) continue;
+        std.debug.print("{s}: byte {d} differs on a rerun: {x} then {x}\n", .{ what, i, x, y });
+        return error.Mismatch;
+    }
+}

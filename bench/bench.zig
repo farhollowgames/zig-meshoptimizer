@@ -291,6 +291,7 @@ const IndexCodecCase = struct {
                 else
                     c.meshopt_encodeIndexBuffer(self.buffer.ptr, self.buffer.len, i.ptr, i.len);
                 std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
             }
         }
 
@@ -303,6 +304,7 @@ const IndexCodecCase = struct {
                 else
                     @call(.never_inline, mo.encodeIndexBuffer, args);
                 std.mem.doNotOptimizeAway(size catch unreachable);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
             }
         }
     };
@@ -324,6 +326,7 @@ const IndexCodecCase = struct {
                     else
                         c.meshopt_decodeIndexBuffer(d.ptr, d.len, @sizeOf(T), s.ptr, s.len);
                     std.debug.assert(rc == 0);
+                    std.mem.doNotOptimizeAway(d.ptr);
                 }
             }
 
@@ -332,6 +335,7 @@ const IndexCodecCase = struct {
                 for (0..self.rounds) |_| {
                     @call(.never_inline, decode, .{ T, self.destination, self.stream }) catch
                         unreachable;
+                    std.mem.doNotOptimizeAway(self.destination.ptr);
                 }
             }
         };
@@ -409,6 +413,7 @@ const MeshletCodecCase = struct {
                     m.triangle_count,
                 );
                 std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
             };
         }
 
@@ -420,6 +425,7 @@ const MeshletCodecCase = struct {
                     self.triangles[m.triangle_offset..][0 .. m.triangle_count * 3],
                 }) catch unreachable;
                 std.mem.doNotOptimizeAway(size);
+                std.mem.doNotOptimizeAway(self.buffer.ptr);
             };
         }
     };
@@ -459,11 +465,11 @@ const MeshletCodecCase = struct {
                             size,
                         );
                         std.debug.assert(rc == 0);
+                        std.mem.doNotOptimizeAway(&vertices);
+                        std.mem.doNotOptimizeAway(&triangles);
                         p = p[4 + size ..];
                     }
                 }
-                std.mem.doNotOptimizeAway(&vertices);
-                std.mem.doNotOptimizeAway(&triangles);
             }
 
             fn port(self: *Self) void {
@@ -481,11 +487,11 @@ const MeshletCodecCase = struct {
                             mo.decodeMeshlet(V, T, &vertices, p[0], &triangles, p[1], stream) catch
                                 unreachable;
                         }
+                        std.mem.doNotOptimizeAway(&vertices);
+                        std.mem.doNotOptimizeAway(&triangles);
                         p = p[4 + size ..];
                     }
                 }
-                std.mem.doNotOptimizeAway(&vertices);
-                std.mem.doNotOptimizeAway(&triangles);
             }
         };
     }
