@@ -27,13 +27,16 @@ pub const RemeshOptions = packed struct(u32) {
     /// closely as it can, instead of at the centroid of the surface in its
     /// voxel; slower.
     solve: bool = false,
-    reserved: u28 = 0,
-    /// For development: places each vertex at the center of its voxel, to
-    /// show the grid. The original keeps this flag out of its header and
-    /// asks that it not be used.
-    internal_debug: bool = false,
-    reserved_high: u1 = 0,
+    /// Bits the original's header does not define. Bit 30 of the flags,
+    /// bit 28 here, is a development flag the original keeps out of its
+    /// header and asks that it not be used: it places each vertex at the
+    /// center of its voxel, to show the grid. The port reads it as the
+    /// original does, so any flags give the original's triangles.
+    reserved: u30 = 0,
 };
+
+/// The original's `meshopt_RemeshInternalDebug`.
+const internal_debug_bit: u32 = 1 << 30;
 
 const empty_row = std.math.maxInt(u32);
 
@@ -666,7 +669,7 @@ fn solve(voxels: []Voxel, scale: f32, options: RemeshOptions) void {
             }
         }
 
-        if (options.internal_debug) {
+        if (@backingInt(options) & internal_debug_bit != 0) {
             px = cx + 0.5 * rscale;
             py = cy + 0.5 * rscale;
             pz = cz + 0.5 * rscale;
@@ -1024,7 +1027,6 @@ test "every cube case has a triangulation" {
 test "options keep the original's bits" {
     try testing.expectEqual(1, @backingInt(RemeshOptions{ .shell = true }));
     try testing.expectEqual(2, @backingInt(RemeshOptions{ .solve = true }));
-    try testing.expectEqual(1 << 30, @backingInt(RemeshOptions{ .internal_debug = true }));
 }
 
 test "a cube remeshes into a closed mesh" {

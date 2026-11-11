@@ -18,8 +18,10 @@ const all_options = [_]mo.RemeshOptions{
     .{ .shell = true },
     .{ .solve = true },
     .{ .shell = true, .solve = true },
-    .{ .internal_debug = true },
-    .{ .shell = true, .solve = true, .internal_debug = true },
+    // The original's undocumented development flag, alone and with both
+    // documented ones.
+    @fromBackingInt(1 << 30),
+    @fromBackingInt(1 << 30 | 3),
 };
 
 /// The original's count, the triangles it writes to `destination` (null
