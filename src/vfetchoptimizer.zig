@@ -71,16 +71,46 @@ pub fn optimizeVertexFetch(
     const vertex_remap = try scratch.alloc(u32, vertex_count);
     @memset(vertex_remap, none);
 
+    // Common sizes get their own loop, so each copy is a few moves.
+    return switch (vertex_size) {
+        inline 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 64 => |size| fetchVertices(
+            Index,
+            size,
+            destination,
+            indices,
+            source,
+            vertex_size,
+            vertex_remap,
+        ),
+        else => fetchVertices(Index, 0, destination, indices, source, vertex_size, vertex_remap),
+    };
+}
+
+/// Copies each vertex to `destination` at its first use and rewrites
+/// `indices` to the new places; `block_size` is `vertex_size`, or 0 when
+/// it is known only at run time.
+fn fetchVertices(
+    comptime Index: type,
+    comptime block_size: usize,
+    destination: []u8,
+    indices: []Index,
+    source: []const u8,
+    vertex_size: usize,
+    vertex_remap: []u32,
+) usize {
+    const size = if (block_size == 0) vertex_size else block_size;
+    assert(size == vertex_size);
+
     var next_vertex: u32 = 0;
 
     for (indices) |*index| {
-        assert(index.* < vertex_count);
+        assert(index.* < vertex_remap.len);
 
         const remap = &vertex_remap[index.*];
 
         if (remap.* == none) {
-            const vertex = source[index.* * vertex_size ..][0..vertex_size];
-            @memcpy(destination[next_vertex * vertex_size ..][0..vertex_size], vertex);
+            const vertex = source[@as(usize, index.*) * size ..][0..size];
+            @memcpy(destination[@as(usize, next_vertex) * size ..][0..size], vertex);
 
             remap.* = next_vertex;
             next_vertex += 1;
