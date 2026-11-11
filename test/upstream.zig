@@ -721,6 +721,6 @@ pub extern fn reference_simplifyEdge(
 ) usize;
 
 /// The system libm's cosf and log2f, which the original calls, from
-/// test/reference.cpp.
+/// test/system_libm.cpp in the reference library.
 pub extern fn reference_cosf(x: f32) f32;
 pub extern fn reference_log2f(x: f32) f32;

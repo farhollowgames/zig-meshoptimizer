@@ -160,7 +160,12 @@ const reference_flags = [_][]const u8{
 
 const suite_flags = reference_flags ++ [_][]const u8{"-DMESHOPTIMIZER_ALLOC_EXPORT"};
 
-/// The original library, built from the pinned upstream sources.
+/// The original library, built from the pinned upstream sources as a
+/// shared library, so its calls into the C library bind to the system's, as
+/// in a normal build of it. Linked into a binary Zig links, they would bind
+/// to compiler_rt's versions instead: its `bcmp`, which the original's
+/// `memcmp` calls become, compares a byte at a time, and its `cosf` and
+/// `log2f` round differently from glibc's.
 fn referenceLibrary(
     b: *std.Build,
     upstream: *std.Build.Dependency,
@@ -169,7 +174,7 @@ fn referenceLibrary(
 ) *std.Build.Step.Compile {
     const reference = b.addLibrary(.{
         .name = "meshoptimizer_reference",
-        .linkage = .static,
+        .linkage = .dynamic,
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
@@ -177,20 +182,16 @@ fn referenceLibrary(
             .link_libcpp = true,
         }),
     });
-    // The original's libm calls go to the system's libm, as in a normal
-    // build of it: in a binary Zig links, they would bind to compiler_rt's
-    // own versions, which round differently. Each source is compiled after
-    // test/libm_redirect.h, which renames them.
-    const redirected = b.addWriteFiles();
-    reference.root_module.addIncludePath(b.path("test"));
-    reference.root_module.addIncludePath(upstream.path("src"));
-    for (upstream_sources) |source| {
-        const wrapper = redirected.add(
-            b.fmt("redirected_{s}", .{source}),
-            b.fmt("#include \"libm_redirect.h\"\n#include \"{s}\"\n", .{source}),
-        );
-        reference.root_module.addCSourceFile(.{ .file = wrapper, .flags = &reference_flags });
-    }
+    reference.bundle_compiler_rt = false;
+    reference.root_module.addCSourceFiles(.{
+        .root = upstream.path("src"),
+        .files = &upstream_sources,
+        .flags = &reference_flags,
+    });
+    reference.root_module.addCSourceFile(.{
+        .file = b.path("test/system_libm.cpp"),
+        .flags = &reference_flags,
+    });
     return reference;
 }
 
