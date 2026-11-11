@@ -83,3 +83,30 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | tangentspace.cpp | `generateTangents`, `generateNormals` | not started |
 | remesher.cpp | `remesh` | not started |
 | meshoptimizer.h | C++ index-type template wrappers (16-bit indices) | not started |
+| demo/clusterlod.h | `clodConfig` (`clusterlod.Config`, the original's field names), `clodDefaultConfig`, `clodDefaultConfigRT` (`defaultConfig`, `defaultConfigRT`), every `max_triangles` from 4 to 256 | oracle-tested |
+| demo/clusterlod.h | `clodBuild` (`build`): `clodMesh` as `Mesh` (slices and `VertexFloats`), the output callback as a context's `output` method returning `i32` or an error union, whose error stops the build | oracle-tested; benchmarked with `defaultConfig(128)`, `defaultConfigRT(128)` up to 1.05x slower (in `buildMeshletsSpatial`'s split and the simplifier) |
+| demo/clusterlod.h | `build` limits: `max_vertices` 3 to 256, `min_triangles` and `max_triangles` 1 to 512 | oracle-tested |
+| demo/clusterlod.h | `partition_spatial` | oracle-tested |
+| demo/clusterlod.h | `partition_sort` | oracle-tested |
+| demo/clusterlod.h | `partition_size`, from 1, groups past 32 clusters included | oracle-tested |
+| demo/clusterlod.h | `cluster_spatial`, `cluster_fill_weight` | oracle-tested |
+| demo/clusterlod.h | `cluster_split_factor` | oracle-tested |
+| demo/clusterlod.h | `simplify_ratio`, 0 to 1 | oracle-tested |
+| demo/clusterlod.h | `simplify_threshold`, below 1 | oracle-tested |
+| demo/clusterlod.h | `simplify_error_merge_previous`, `simplify_error_merge_additive` | oracle-tested |
+| demo/clusterlod.h | `simplify_error_factor_sloppy` | oracle-tested |
+| demo/clusterlod.h | `simplify_error_edge_limit` | oracle-tested |
+| demo/clusterlod.h | `simplify_error_clamped` | oracle-tested |
+| demo/clusterlod.h | `simplify_permissive` | oracle-tested |
+| demo/clusterlod.h | `simplify_fallback_permissive`, with the zeros the original's vector resize leaves when the permissive count is the larger | oracle-tested |
+| demo/clusterlod.h | `simplify_fallback_sloppy` | oracle-tested |
+| demo/clusterlod.h | `simplify_regularize` | oracle-tested |
+| demo/clusterlod.h | `simplify_preserve_folds` | oracle-tested |
+| demo/clusterlod.h | `simplify_dilate_borders`, writing through `Mesh.positions_mut` (the original casts away `const`) | oracle-tested |
+| demo/clusterlod.h | `optimize_bounds` | oracle-tested |
+| demo/clusterlod.h | `optimize_clusters`, `optimize_clusters_level` 0 to 9 (a `u4`) | oracle-tested |
+| demo/clusterlod.h | mesh inputs: attributes in the vertices or a buffer of their own, up to 16 weighed; `attribute_protect_mask`; `vertex_lock` flags `lock`, `protect` and `priority`; position strides from 3 to 64 floats; vertices no triangle uses | oracle-tested |
+| demo/clusterlod.h | ids from output, recorded as `Cluster.refined`: any `i32`, -1 among them (as for the mesh's own triangles) | oracle-tested |
+| demo/clusterlod.h | `clodLocalIndices` (`localIndices`) | oracle-tested |
+| demo/clusterlod.h | `clodBuildHierarchyBound`, `clodBuildHierarchy` (`buildHierarchyBound`, `buildHierarchy`), node widths 2 to 80 | benchmarked |
+| demo/clusterlod.h | left out: `clodBuild` without an output callback (a context whose `output` returns -1 does the same); the C++ template overload for lambdas (any context with `output`); NaN, infinite or overflowing positions, on which `computeClusterBounds` asserts (the original too, with asserts on); an `attribute_protect_mask` with attribute strides of 32 floats or more, where the original shifts past 31 bits (undefined) and the port reads attributes 0 to 31 | not started |

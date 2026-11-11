@@ -13,6 +13,7 @@ const c = @import("upstream");
 const meshes = @import("meshes");
 
 const Vertex = meshes.Vertex;
+const clod = mo.clusterlod;
 
 const runs = 11;
 
@@ -334,6 +335,23 @@ pub fn main(init: std.process.Init) !void {
             bench.run(@tagName(kind) ++ " " ++ name, &case);
         }
     }
+
+    // The cluster LOD builder, set up as the original's demo sets it up, on
+    // the demo mesh and a sphere of 262144 triangles; and the hierarchy over
+    // the sphere's groups.
+    const lod_sphere = try meshes.sphere(arena, 256, 512);
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 262k", lod_sphere } }) |named| {
+        const configs = .{
+            .{ "default(128) ", clod.defaultConfig(128) },
+            .{ "defaultRT(128) ", clod.defaultConfigRT(128) },
+        };
+        inline for (configs) |config| {
+            var case: ClusterLodCase = .{ .gpa = bench.gpa, .mesh = named[1], .config = config[1] };
+            bench.run("clusterlod build " ++ config[0] ++ named[0], &case);
+        }
+    }
+    var hierarchy_case: HierarchyCase = try .init(arena, bench.gpa, lod_sphere);
+    bench.run("clusterlod buildHierarchy sphere 262k", &hierarchy_case);
 
     try vertexCodec(&bench, arena, soup);
 
@@ -2479,5 +2497,183 @@ const SimplifyCase = struct {
                 m.vertices.len / 10,
             ),
         };
+    }
+};
+
+/// The original demo's attributes: normals at half weight, the seams of
+/// the texture coordinates after them protected.
+const lod_weights = [_]f32{ 0.5, 0.5, 0.5 };
+const lod_protect_mask: u32 = (1 << 3) | (1 << 4);
+
+fn lodMesh(mesh: meshes.Mesh) clod.Mesh {
+    const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(mesh.vertices));
+    const stride = @sizeOf(Vertex) / @sizeOf(f32);
+    return .{
+        .indices = mesh.indices,
+        .positions = .init(floats, stride),
+        .attributes = .init(floats[3..], stride),
+        .attribute_weights = &lod_weights,
+        .attribute_protect_mask = lod_protect_mask,
+    };
+}
+
+fn originalLodMesh(mesh: meshes.Mesh) c.ClodMesh {
+    const floats: [*]const f32 = @ptrCast(mesh.vertices.ptr);
+    return .{
+        .indices = mesh.indices.ptr,
+        .index_count = mesh.indices.len,
+        .vertex_count = mesh.vertices.len,
+        .vertex_positions = floats,
+        .vertex_positions_stride = @sizeOf(Vertex),
+        .vertex_attributes = floats + 3,
+        .vertex_attributes_stride = @sizeOf(Vertex),
+        .vertex_lock = null,
+        .attribute_weights = &lod_weights,
+        .attribute_count = lod_weights.len,
+        .attribute_protect_mask = lod_protect_mask,
+    };
+}
+
+fn originalLodConfig(config: clod.Config) c.ClodConfig {
+    var result = std.mem.zeroes(c.ClodConfig);
+    inline for (@typeInfo(c.ClodConfig).@"struct".field_names) |name| {
+        @field(result, name) = @field(config, name);
+    }
+    return result;
+}
+
+/// One `clusterlod.build`, whose output tallies the triangles and indices
+/// it gets, so the work stays observable.
+const ClusterLodCase = struct {
+    gpa: std.mem.Allocator,
+    mesh: meshes.Mesh,
+    config: clod.Config,
+    tally: Tally = .{},
+
+    const Tally = struct {
+        groups: u32 = 0,
+        triangles: usize = 0,
+        checksum: u32 = 0,
+
+        fn add(self: *Tally, indices: []const u32) void {
+            self.triangles += indices.len / 3;
+            self.checksum +%= indices[0] +% indices[indices.len - 1];
+        }
+
+        fn next(self: *Tally) i32 {
+            self.groups += 1;
+            return @intCast(self.groups - 1);
+        }
+
+        pub fn output(self: *Tally, group: clod.Group, clusters: []const clod.Cluster) i32 {
+            _ = group;
+            for (clusters) |cluster| self.add(cluster.indices);
+            return self.next();
+        }
+    };
+
+    fn originalOutput(
+        context: ?*anyopaque,
+        group: *const c.ClodGroup,
+        clusters: [*]const c.ClodCluster,
+        cluster_count: usize,
+    ) callconv(.c) c_int {
+        _ = group;
+        const tally: *Tally = @ptrCast(@alignCast(context.?));
+        for (clusters[0..cluster_count]) |cluster| {
+            tally.add(cluster.indices.?[0..cluster.index_count]);
+        }
+        return tally.next();
+    }
+
+    pub fn work(self: *const ClusterLodCase) Work {
+        return .{ .triangles = self.mesh.indices.len / 3 };
+    }
+
+    pub fn prepare(self: *ClusterLodCase) void {
+        self.tally = .{};
+    }
+
+    fn original(self: *ClusterLodCase) void {
+        const config = originalLodConfig(self.config);
+        const mesh = originalLodMesh(self.mesh);
+        c.reference_clodBuild(&config, &mesh, &self.tally, &originalOutput);
+    }
+
+    fn port(self: *ClusterLodCase) void {
+        clod.build(self.gpa, self.config, lodMesh(self.mesh), &self.tally) catch unreachable;
+    }
+};
+
+/// `clusterlod.buildHierarchy` at node width 8 over the groups of a build
+/// of `mesh` with `defaultConfig(128)`, many rounds per timing, as one is
+/// short.
+const HierarchyCase = struct {
+    gpa: std.mem.Allocator,
+    groups: []const clod.Group,
+    level_count: usize,
+    nodes: []clod.Node,
+    count: usize = 0,
+
+    const node_width = 8;
+    const rounds = 100;
+
+    /// Keeps the groups a build hands out.
+    const Collect = struct {
+        arena: std.mem.Allocator,
+        groups: std.ArrayList(clod.Group) = .empty,
+
+        pub fn output(self: *Collect, group: clod.Group, clusters: []const clod.Cluster) !i32 {
+            _ = clusters;
+            try self.groups.append(self.arena, group);
+            return @intCast(self.groups.items.len - 1);
+        }
+    };
+
+    fn init(arena: std.mem.Allocator, gpa: std.mem.Allocator, mesh: meshes.Mesh) !HierarchyCase {
+        var collect: Collect = .{ .arena = arena };
+        try clod.build(gpa, clod.defaultConfig(128), lodMesh(mesh), &collect);
+        const groups = collect.groups.items;
+        var level_count: usize = 0;
+        for (groups) |group| level_count = @max(level_count, @as(usize, @intCast(group.depth)) + 1);
+        const bound = clod.buildHierarchyBound(groups.len, node_width, level_count);
+        return .{
+            .gpa = gpa,
+            .groups = groups,
+            .level_count = level_count,
+            .nodes = try arena.alloc(clod.Node, bound),
+        };
+    }
+
+    pub fn work(self: *const HierarchyCase) Work {
+        return .{ .values = self.groups.len * rounds };
+    }
+
+    fn original(self: *HierarchyCase) void {
+        const nodes: [*]c.ClodNode = @ptrCast(self.nodes.ptr);
+        const groups: [*]const c.ClodGroup = @ptrCast(self.groups.ptr);
+        for (0..rounds) |_| {
+            self.count = c.clodBuildHierarchy(
+                nodes,
+                groups,
+                self.groups.len,
+                node_width,
+                self.level_count,
+            );
+            std.mem.doNotOptimizeAway(self.count);
+        }
+    }
+
+    fn port(self: *HierarchyCase) void {
+        for (0..rounds) |_| {
+            self.count = clod.buildHierarchy(
+                self.gpa,
+                self.nodes,
+                self.groups,
+                node_width,
+                self.level_count,
+            ) catch unreachable;
+            std.mem.doNotOptimizeAway(self.count);
+        }
     }
 };

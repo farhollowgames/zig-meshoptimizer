@@ -182,6 +182,14 @@ fn referenceLibrary(
         .files = &upstream_sources,
         .flags = &reference_flags,
     });
+    // The cluster LOD builder from the original's demo, with entry points
+    // the tests and the benchmark can call.
+    reference.root_module.addIncludePath(upstream.path("src"));
+    reference.root_module.addIncludePath(upstream.path("demo"));
+    reference.root_module.addCSourceFile(.{
+        .file = b.path("test/clusterlod.cpp"),
+        .flags = &reference_flags,
+    });
     return reference;
 }
 

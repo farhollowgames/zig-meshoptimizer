@@ -133,6 +133,10 @@ pub const simplifyPrune = simplifier.simplifyPrune;
 pub const simplifyPoints = simplifier.simplifyPoints;
 pub const simplifyScale = simplifier.simplifyScale;
 
+/// The original's cluster LOD builder from its demo, kept in its own namespace
+/// since names like `Config` and `build` say nothing at the root.
+pub const clusterlod = @import("clusterlod.zig");
+
 test {
     std.testing.refAllDecls(@This());
     _ = @import("convert.zig");
