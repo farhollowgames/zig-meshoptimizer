@@ -665,3 +665,24 @@ pub extern fn meshopt_computePositionExponent(
 /// meshoptimizer.h's inline C++ quantizers, exported by test/reference.cpp.
 pub extern fn reference_quantizeUnorm(v: f32, N: c_int) c_int;
 pub extern fn reference_quantizeSnorm(v: f32, N: c_int) c_int;
+/// The function under meshopt_simplify, meshopt_simplifyWithAttributes and
+/// meshopt_simplifyWithUpdate, with the internal option bits: simplifier.cpp
+/// defines it with C++ linkage and the header leaves it out, so
+/// test/reference.cpp exports it under a C name.
+pub extern fn reference_simplifyEdge(
+    destination: ?[*]u32,
+    indices: ?[*]const u32,
+    index_count: usize,
+    vertex_positions: ?[*]const f32,
+    vertex_count: usize,
+    vertex_positions_stride: usize,
+    vertex_attributes: ?[*]const f32,
+    vertex_attributes_stride: usize,
+    attribute_weights: ?[*]const f32,
+    attribute_count: usize,
+    vertex_lock: ?[*]const u8,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+    result_error: ?*f32,
+) usize;

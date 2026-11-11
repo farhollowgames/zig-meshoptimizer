@@ -41,6 +41,18 @@ pub const generateAdjacencyIndexBuffer = indexgenerator.generateAdjacencyIndexBu
 pub const generateTessellationIndexBuffer = indexgenerator.generateTessellationIndexBuffer;
 pub const generateProvokingIndexBuffer = indexgenerator.generateProvokingIndexBuffer;
 
+pub const simplifier = @import("simplifier.zig");
+pub const SimplifyOptions = simplifier.SimplifyOptions;
+pub const SimplifyVertexFlags = simplifier.SimplifyVertexFlags;
+pub const simplify = simplifier.simplify;
+pub const simplifyWithAttributes = simplifier.simplifyWithAttributes;
+pub const simplifyWithUpdate = simplifier.simplifyWithUpdate;
+pub const simplifyEdge = simplifier.simplifyEdge;
+pub const simplifySloppy = simplifier.simplifySloppy;
+pub const simplifyPrune = simplifier.simplifyPrune;
+pub const simplifyPoints = simplifier.simplifyPoints;
+pub const simplifyScale = simplifier.simplifyScale;
+
 test {
     std.testing.refAllDecls(@This());
 }

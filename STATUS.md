@@ -31,7 +31,16 @@ Loomwork's bake calls `generateVertexRemap`, `remapVertexBuffer`,
 | rasterizer.cpp | `analyzeOverdraw`, `analyzeCoverage` | not started |
 | stripifier.cpp | `stripify`, `stripifyBound`, `unstripify`, `unstripifyBound` | not started |
 | spatialorder.cpp | `spatialSortRemap`, `spatialSortTriangles`, `spatialClusterPoints` | not started |
-| simplifier.cpp | `simplify`, `simplifyWithAttributes`, `simplifyWithUpdate`, `simplifySloppy`, `simplifyPrune`, `simplifyPoints`, `simplifyScale`, every option and vertex lock flag | not started |
+| simplifier.cpp | `simplify` | oracle-tested |
+| simplifier.cpp | `simplifyWithAttributes`: 0 to 32 attributes, any weights, vertex flags | oracle-tested |
+| simplifier.cpp | `simplifyWithUpdate`: positions and attributes moved in place | oracle-tested |
+| simplifier.cpp | `simplifyEdge` (`meshopt_simplifyEdge`, exported but not in the header): the internal solve into another destination, the internal debug bits | oracle-tested |
+| simplifier.cpp | options `lock_border`, `sparse`, `error_absolute`, `prune`, `regularize`, `permissive`, `regularize_light`, `preserve_folds`, `error_clamped`, alone and in all 512 combinations | oracle-tested |
+| simplifier.cpp | vertex flags `lock`, `protect`, `priority`, alone and combined, other bits ignored | oracle-tested |
+| simplifier.cpp | `simplifySloppy`, with and without vertex locks | oracle-tested |
+| simplifier.cpp | `simplifyPrune` | oracle-tested |
+| simplifier.cpp | `simplifyPoints`, with and without colors | oracle-tested |
+| simplifier.cpp | `simplifyScale` | oracle-tested |
 | partition.cpp | `partitionClusters` | not started |
 | opacitymap.cpp | `opacityMapMeasure`, `opacityMapRasterize`, `opacityMapEntrySize`, `opacityMapCompact` | not started |
 | tangentspace.cpp | `generateTangents`, `generateNormals` | not started |

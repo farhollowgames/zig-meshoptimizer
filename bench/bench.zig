@@ -40,6 +40,9 @@ const Bench = struct {
     fn best(self: *Bench, case: anytype, comptime which: []const u8) u64 {
         var best_ns: u64 = std.math.maxInt(u64);
         for (0..runs) |_| {
+            // Cases that change their inputs restore them, untimed, in a public
+            // `prepare`.
+            if (@hasDecl(@TypeOf(case.*), "prepare")) case.prepare();
             const t0 = std.Io.Clock.awake.now(self.io);
             @field(@TypeOf(case.*), which)(case);
             const t1 = std.Io.Clock.awake.now(self.io);
@@ -79,6 +82,26 @@ pub fn main(init: std.process.Init) !void {
             remap_case.remap,
         );
         bench.run("generateProvokingIndexBuffer " ++ name, &provoking_case);
+    }
+
+    // The simplifier, on indexed meshes: the demo mesh as the original's
+    // demo indexes it, and the large sphere.
+    const pirate_remap = try arena.alloc(u32, soup.len);
+    const pirate_unique = c.meshopt_generateVertexRemap(
+        pirate_remap.ptr,
+        null,
+        soup.len,
+        soup.ptr,
+        soup.len,
+        @sizeOf(Vertex),
+    );
+    const pirate = try meshes.indexed(arena, soup, pirate_remap, pirate_unique);
+    inline for (.{ .{ "pirate", pirate }, .{ "sphere 1M", big } }) |named| {
+        const name = named[0];
+        inline for (comptime std.enums.values(SimplifyCase.Kind)) |kind| {
+            var case: SimplifyCase = try .init(arena, bench.gpa, named[1], kind);
+            bench.run(@tagName(kind) ++ " " ++ name, &case);
+        }
     }
 
     const total_ratio = @as(f64, @floatFromInt(bench.port_total_ns)) /
@@ -217,5 +240,236 @@ const ProvokingCase = struct {
             self.vertex_count,
         ) catch
             unreachable;
+    }
+};
+
+/// One simplifier function on an indexed mesh, to a tenth of its triangles
+/// or vertices, with the error bound the original's demo uses.
+const SimplifyCase = struct {
+    gpa: std.mem.Allocator,
+    kind: Kind,
+    mesh: meshes.Mesh,
+    /// What `simplifyWithUpdate` changes, copied from `mesh` by `prepare`.
+    vertices: []Vertex,
+    indices: []u32,
+    destination: []u32,
+    result: usize = 0,
+
+    const Kind = enum {
+        simplify,
+        simplifyWithAttributes,
+        simplifyWithUpdate,
+        simplifySloppy,
+        simplifyPrune,
+        simplifyPoints,
+    };
+
+    const target_error = 1e-2;
+    /// Normals at half the weight of texture coordinates.
+    const weights = [_]f32{ 0.5, 0.5, 0.5, 1, 1 };
+    const stride = @sizeOf(Vertex);
+
+    fn init(
+        arena: std.mem.Allocator,
+        gpa: std.mem.Allocator,
+        mesh: meshes.Mesh,
+        kind: Kind,
+    ) !SimplifyCase {
+        return .{
+            .gpa = gpa,
+            .kind = kind,
+            .mesh = mesh,
+            .vertices = try arena.dupe(Vertex, mesh.vertices),
+            .indices = try arena.dupe(u32, mesh.indices),
+            .destination = try arena.alloc(u32, @max(mesh.indices.len, mesh.vertices.len)),
+        };
+    }
+
+    /// `simplifyWithUpdate` moves vertices and rewrites indices in place.
+    pub fn prepare(self: *SimplifyCase) void {
+        if (self.kind != .simplifyWithUpdate) return;
+        @memcpy(self.vertices, self.mesh.vertices);
+        @memcpy(self.indices, self.mesh.indices);
+    }
+
+    fn targetIndexCount(self: *const SimplifyCase) usize {
+        return self.mesh.indices.len / 3 / 10 * 3;
+    }
+
+    fn positions(self: *const SimplifyCase) [*]const f32 {
+        return @ptrCast(self.mesh.vertices.ptr);
+    }
+
+    fn attributes(self: *const SimplifyCase) [*]const f32 {
+        return self.positions() + 3;
+    }
+
+    fn original(self: *SimplifyCase) void {
+        const m = self.mesh;
+        const n = m.indices.len;
+        const vertex_count = m.vertices.len;
+        var result_error: f32 = 0;
+        self.result = switch (self.kind) {
+            .simplify => c.meshopt_simplify(
+                self.destination.ptr,
+                m.indices.ptr,
+                n,
+                self.positions(),
+                vertex_count,
+                stride,
+                self.targetIndexCount(),
+                target_error,
+                0,
+                &result_error,
+            ),
+            .simplifyWithAttributes => c.meshopt_simplifyWithAttributes(
+                self.destination.ptr,
+                m.indices.ptr,
+                n,
+                self.positions(),
+                vertex_count,
+                stride,
+                self.attributes(),
+                stride,
+                &weights,
+                weights.len,
+                null,
+                self.targetIndexCount(),
+                target_error,
+                0,
+                &result_error,
+            ),
+            .simplifyWithUpdate => update: {
+                const floats: [*]f32 = @ptrCast(self.vertices.ptr);
+                break :update c.meshopt_simplifyWithUpdate(
+                    self.indices.ptr,
+                    n,
+                    floats,
+                    vertex_count,
+                    stride,
+                    floats + 3,
+                    stride,
+                    &weights,
+                    weights.len,
+                    null,
+                    self.targetIndexCount(),
+                    target_error,
+                    0,
+                    &result_error,
+                );
+            },
+            .simplifySloppy => c.meshopt_simplifySloppy(
+                self.destination.ptr,
+                m.indices.ptr,
+                n,
+                self.positions(),
+                vertex_count,
+                stride,
+                null,
+                self.targetIndexCount(),
+                std.math.floatMax(f32),
+                &result_error,
+            ),
+            .simplifyPrune => c.meshopt_simplifyPrune(
+                self.destination.ptr,
+                m.indices.ptr,
+                n,
+                self.positions(),
+                vertex_count,
+                stride,
+                target_error,
+            ),
+            .simplifyPoints => c.meshopt_simplifyPoints(
+                self.destination.ptr,
+                self.positions(),
+                vertex_count,
+                stride,
+                self.attributes(),
+                stride,
+                1,
+                vertex_count / 10,
+            ),
+        };
+        std.mem.doNotOptimizeAway(self.result);
+        std.mem.doNotOptimizeAway(result_error);
+    }
+
+    fn port(self: *SimplifyCase) void {
+        self.result = self.portCall() catch unreachable;
+        std.mem.doNotOptimizeAway(self.result);
+    }
+
+    fn portCall(self: *SimplifyCase) !usize {
+        const m = self.mesh;
+        const floats = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(m.vertices));
+        const view: mo.VertexFloats = .init(floats, stride / @sizeOf(f32));
+        const attribute_view: mo.VertexFloats = .init(floats[3..], stride / @sizeOf(f32));
+        var result_error: f32 = 0;
+        defer std.mem.doNotOptimizeAway(result_error);
+        return switch (self.kind) {
+            .simplify => mo.simplify(
+                self.gpa,
+                self.destination,
+                m.indices,
+                view,
+                self.targetIndexCount(),
+                target_error,
+                .{},
+                &result_error,
+            ),
+            .simplifyWithAttributes => mo.simplifyWithAttributes(
+                self.gpa,
+                self.destination,
+                m.indices,
+                view,
+                attribute_view,
+                &weights,
+                null,
+                self.targetIndexCount(),
+                target_error,
+                .{},
+                &result_error,
+            ),
+            .simplifyWithUpdate => update: {
+                const copy = std.mem.bytesAsSlice(f32, std.mem.sliceAsBytes(self.vertices));
+                break :update mo.simplifyWithUpdate(
+                    self.gpa,
+                    self.indices,
+                    .init(copy, stride / @sizeOf(f32)),
+                    .init(copy[3..], stride / @sizeOf(f32)),
+                    &weights,
+                    null,
+                    self.targetIndexCount(),
+                    target_error,
+                    .{},
+                    &result_error,
+                );
+            },
+            .simplifySloppy => mo.simplifySloppy(
+                self.gpa,
+                self.destination,
+                m.indices,
+                view,
+                null,
+                self.targetIndexCount(),
+                std.math.floatMax(f32),
+                &result_error,
+            ),
+            .simplifyPrune => mo.simplifyPrune(
+                self.gpa,
+                self.destination,
+                m.indices,
+                view,
+                target_error,
+            ),
+            .simplifyPoints => mo.simplifyPoints(
+                self.gpa,
+                self.destination[0 .. m.vertices.len / 10],
+                view,
+                attribute_view,
+                1,
+                m.vertices.len / 10,
+            ),
+        };
     }
 };
