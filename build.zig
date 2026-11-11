@@ -89,10 +89,11 @@ pub fn build(b: *std.Build) void {
     suite.root_module.addIncludePath(upstream.path("demo"));
     suite.root_module.addCSourceFile(.{ .file = b.path("test/suite.cpp"), .flags = &suite_flags });
     // The original's allocator hooks, so the suite's allocation counts see
-    // every allocation the port makes.
+    // every allocation the port makes; without the original's cache, as
+    // test/capi.zig exports meshopt_setAllocatorCache over the port's.
     suite.root_module.addCSourceFile(.{
         .file = upstream.path("src/allocator.cpp"),
-        .flags = &suite_flags,
+        .flags = &suite_allocator_flags,
     });
     test_step.dependOn(&b.addRunArtifact(suite).step);
 
@@ -159,6 +160,8 @@ const reference_flags = [_][]const u8{
 };
 
 const suite_flags = reference_flags ++ [_][]const u8{"-DMESHOPTIMIZER_ALLOC_EXPORT"};
+
+const suite_allocator_flags = suite_flags ++ [_][]const u8{"-DMESHOPTIMIZER_ALLOC_NOCACHE"};
 
 /// The original library, built from the pinned upstream sources as a
 /// shared library, so its calls into the C library bind to the system's, as

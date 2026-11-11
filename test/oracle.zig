@@ -24,6 +24,7 @@ comptime {
     _ = @import("remesher_test.zig");
     _ = @import("tangentspace_test.zig");
     _ = @import("opacitymap_test.zig");
+    _ = @import("allocator_test.zig");
 }
 
 const std = @import("std");

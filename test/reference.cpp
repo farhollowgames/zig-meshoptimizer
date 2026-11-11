@@ -39,3 +39,11 @@ extern "C" size_t reference_simplifyEdge(unsigned int* destination, const unsign
 {
 	return meshopt_simplifyEdge(destination, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, vertex_attributes_data, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, target_error, options, out_result_error);
 }
+
+// The original's default allocator back, as the other tests expect it: the
+// cache off, then the header's default callbacks, which only C++ can name.
+extern "C" void reference_resetAllocator()
+{
+	meshopt_setAllocatorCache(0, 0);
+	meshopt_setAllocator(operator new, operator delete);
+}

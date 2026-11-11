@@ -223,7 +223,8 @@ large mesh.
 | --- | --- |
 | `meshopt_setAllocator`: every function that needs memory takes a `std.mem.Allocator`; the original's suite counts its allocations through its own hooks | oracle-tested |
 | `meshopt_Allocator`: `Scratch`, the same allocations in the same order, freed newest first | oracle-tested |
-| `meshopt_setAllocatorCache` | not started |
+| `meshopt_setAllocatorCache`: `AllocatorCache`, an allocator the caller makes over a backing allocator and passes, with a `Local` handle per thread; up to 64 blocks, sizes rounded down to 16 bytes, the size clamp on overflow, the block a handle held last or else the lowest free one, the original's fit test and 16-byte steps, the backing allocator for what does not fit, for alignment above 16 and when every block is taken; `deinit` with every block back; the same backing calls as the original's cache | benchmarked |
+| zero-length scratch arrays (empty meshes): the original asks its callbacks or cache for 0 bytes, which its cache rounds up to 16; the port's `Scratch` asks for nothing, as `std.mem.Allocator` hands out empty slices without a call, so the backing allocator can see fewer calls | differs, for the author |
 
 ## Cluster LOD (demo/clusterlod.h)
 
