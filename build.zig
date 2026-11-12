@@ -42,7 +42,9 @@ pub fn build(b: *std.Build) void {
     const unit_tests = b.addTest(.{ .root_module = test_mod, .filters = test_filters });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 
-    // The original C++ is fetched only for the tests and the benchmark.
+    // The original C++ is fetched only for the tests and the benchmark, and never for a
+    // package that depends on this one.
+    if (!b.isRoot()) return;
     const upstream = b.lazyDependency("upstream", .{}) orelse return;
 
     const upstream_mod = b.createModule(.{

@@ -37,7 +37,7 @@ Farhollow Games, and has not yet been reviewed by a person.
 ## Install
 
 ```sh
-zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#v0.1.0
+zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#v0.1.1
 ```
 
 Then, in `build.zig`:
