@@ -135,7 +135,7 @@ triangles, the median of three runs:
 
 Over all 218 benchmark cases the port is at most 5% slower than the
 original in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
-called on one float at a time in a loop (385% and 412% slower), which Zig
+called on one float at a time in a loop (about 5 times slower), which Zig
 does not vectorize; called on vectors of 16 floats they run at the same
 speed. AMD Ryzen 9
 9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against clang
