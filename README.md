@@ -122,27 +122,28 @@ test suite, run against the port; 52 test the port alone. The inputs are
 the original's demo mesh, generated meshes, hand-made edge cases, malformed
 encoded data and seeded fuzzing, with 1,000 cases or more per fuzz test.
 
-Port time divided by original time on a generated sphere of about a million
-triangles, the median of three runs (below 1, the port takes less time):
+Port time against original time on a generated sphere of about a million
+triangles, the median of three runs:
 
-| function | port ÷ original |
+| function | port vs original |
 | --- | ---: |
-| `generateVertexRemap` | 0.95 |
-| `optimizeVertexCache` | 0.99 |
-| `buildMeshlets` | 0.77 |
-| `simplify` | 1.07 |
-| `decodeVertexBuffer` | 1.03 |
+| `generateVertexRemap` | 5% faster |
+| `optimizeVertexCache` | 1% faster |
+| `buildMeshlets` | 23% faster |
+| `simplify` | 7% slower |
+| `decodeVertexBuffer` | 3% slower |
 
-Over all 218 benchmark cases the port's time is at most 1.05 of the
-original's in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
-called on one float at a time in a loop (4.9 and 5.1), which Zig does not
-vectorize; called on vectors of 16 floats they take 1.00. AMD Ryzen 9
+Over all 218 benchmark cases the port is at most 5% slower than the
+original in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
+called on one float at a time in a loop (385% and 412% slower), which Zig
+does not vectorize; called on vectors of 16 floats they run at the same
+speed. AMD Ryzen 9
 9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against clang
 22.1.8 `-O3`, measured while other builds ran on the machine.
 
 - [`doc/TESTING.md`](doc/TESTING.md): how the tests compare the port with
   the original, and what this repository's tests cover.
-- [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): every case's time, the flags
+- [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): ratios and full tables: every case's time, the flags
   on both sides, the biases and the command.
 
 ## Licence and references
