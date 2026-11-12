@@ -11,9 +11,9 @@ vertex and index data, simplifies meshes, and builds meshlets. It is pure
 Zig, with no dependencies beyond the standard library, and links no libc
 or libc++.
 
-This port is not affiliated with or reviewed by the meshoptimizer authors.
-Its code was written with AI assistance (Claude, Anthropic's model) for
-Farhollow Games, and has not yet been reviewed by a person.
+This port is not affiliated with or reviewed by the original authors. Its
+code was written with AI assistance for Farhollow Games, and is only machine
+verified. See [the tests](doc/TESTING.md) and [parity with the original](doc/parity.md).
 
 ## Features
 
