@@ -40,7 +40,9 @@ verified. See [the tests](doc/TESTING.md) and [parity with the original](doc/par
 zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#v0.1.1
 ```
 
-Then, in `build.zig`:
+`v0.1.1` is the latest release.
+
+In `build.zig`:
 
 ```zig
 const meshoptimizer = b.dependency("meshoptimizer", .{ .target = target, .optimize = optimize });
@@ -87,14 +89,16 @@ const positions: meshopt.VertexFloats = .fromField(Vertex, "position", vertices)
 
 ## Differences from the original
 
-[`doc/parity.md`](doc/parity.md) gives the reasons.
+The reasons are in [`doc/parity.md`](doc/parity.md).
 
-*Additions*
+*Additions*:
+
 - `quantizeUnorm` and `quantizeSnorm` take a vector of floats as well as
   one float.
 - `clusterlod`, the original's demo library, is part of the package.
 
-*Changes to expect*
+*Changes to expect*:
+
 - Functions that take index buffers take the index type first, `u16` or
   `u32`.
 - Functions that need scratch memory take a `std.mem.Allocator`, in place
@@ -109,14 +113,12 @@ const positions: meshopt.VertexFloats = .fromField(Vertex, "position", vertices)
 
 ## Not included
 
-The SIMD paths for Wasm and 32-bit ARM, run-time SSSE3 detection, the
-build switches, and the index templates for types other than `u16` and
-`u32`; [`STATUS.md`](STATUS.md#left-out) lists each left-out item and the
-reason.
+The parts of the original that are left out, each with its reason, are listed in
+[`STATUS.md`](STATUS.md#left-out).
 
 ## Testing and benchmarks
 
-365 tests. 184 run the original beside the port on the same inputs and
+`zig build test` runs 365 tests. 184 run the original beside the port on the same inputs and
 compare every output byte and returned value; 129 are the original's own
 test suite, run against the port; 52 test the port alone. The inputs are
 the original's demo mesh, generated meshes, hand-made edge cases, malformed
@@ -137,9 +139,10 @@ Over all 218 benchmark cases the port is at most 5% slower than the
 original in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
 called on one float at a time in a loop (about 5 times slower), which Zig
 does not vectorize; called on vectors of 16 floats they run at the same
-speed. AMD Ryzen 9
-9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against clang
-22.1.8 `-O3`, measured while other builds ran on the machine.
+speed.
+
+AMD Ryzen 9 9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against
+clang 22.1.8 `-O3`, measured while other builds ran on the machine.
 
 - [`doc/TESTING.md`](doc/TESTING.md): how the tests compare the port with
   the original, and what this repository's tests cover.
