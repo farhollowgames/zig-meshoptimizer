@@ -1,19 +1,19 @@
 # zig-meshoptimizer
 
-Tracks meshoptimizer 1.3 · Zig 0.17 · [status](STATUS.md)
-
-## What it is
-
-A Zig port of [meshoptimizer](#licence-and-references), Arseny
-Kapoulkine's library for preparing meshes for GPU rendering: it reorders
-and indexes triangles for the vertex cache and vertex fetch, compresses
-vertex and index data, simplifies meshes, and builds meshlets. It is pure
-Zig, with no dependencies beyond the standard library, and links no libc
-or libc++.
+Ported from meshoptimizer 1.3 (`f0a684f`) · Zig 0.17.0 · [status](STATUS.md)
 
 This port is not affiliated with or reviewed by the original authors. Its
 code was written with AI assistance for Farhollow Games, and is only machine
 verified. See [the tests](doc/TESTING.md) and [parity with the original](doc/parity.md).
+
+## What it is
+
+A Zig port of meshoptimizer, Arseny Kapoulkine's library for preparing
+meshes for GPU rendering: it reorders and indexes triangles for the vertex
+cache and vertex fetch, compresses vertex and index data, simplifies meshes,
+and builds meshlets. It is pure Zig, with no dependencies beyond the
+standard library, and links no libc or libc++. The original is listed under
+[References](#references).
 
 ## Features
 
@@ -40,7 +40,7 @@ verified. See [the tests](doc/TESTING.md) and [parity with the original](doc/par
 zig fetch --save git+https://github.com/farhollowgames/zig-meshoptimizer#v0.1.1
 ```
 
-`v0.1.1` is the latest release.
+`v0.1.1` is the latest release. The package needs Zig 0.17.0.
 
 In `build.zig`:
 
@@ -111,64 +111,88 @@ The reasons are in [`doc/parity.md`](doc/parity.md).
 - `cosf` and `log2f` are the port's own, as glibc computes them, on every
   machine.
 
-## Not included
+## Left out
 
-The parts of the original that are left out, each with its reason, are listed in
-[`STATUS.md`](STATUS.md#left-out).
+The parts of the original that are left out, each with its reason, are
+listed in [`STATUS.md`](STATUS.md#left-out). In short:
 
-## Testing and benchmarks
+- The Wasm SIMD and 32-bit ARM NEON paths of the codecs and filters: those
+  targets take the scalar paths, which give the same bytes as the
+  original's scalar build.
+- x86 run-time SSSE3 detection in the vertex codec: the decoder is chosen
+  at compile time from the target.
+- The build switches for C linkage, allocator plumbing, speed and
+  debugging, and the undocumented `MESHOPTIMIZER_CLUSTERIZER_INDEXLIMIT`.
+- The NEON vertex decoder's recomputed delta base on Apple and Windows,
+  which gives the same values.
+- A few corners of cluster LOD: `clodBuild` without an output callback, the
+  C++ lambda overload, and inputs on which the original asserts or is
+  undefined.
 
-`zig build test` runs 365 tests. 184 run the original beside the port on the same inputs and
-compare every output byte and returned value; 129 are the original's own
-test suite, run against the port; 52 test the port alone. The inputs are
-the original's demo mesh, generated meshes, hand-made edge cases, malformed
-encoded data and seeded fuzzing, with 1,000 cases or more per fuzz test.
+## Tests
 
-Port time against original time on a generated sphere of about a million
-triangles, the median of three runs:
-
-| function | port vs original |
-| --- | ---: |
-| `generateVertexRemap` | 5% faster |
-| `optimizeVertexCache` | 1% faster |
-| `buildMeshlets` | 23% faster |
-| `simplify` | 7% slower |
-| `decodeVertexBuffer` | 3% slower |
-
-Over all 218 benchmark cases the port is at most 5% slower than the
-original in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
-called on one float at a time in a loop (about 5 times slower), which Zig
-does not vectorize; called on vectors of 16 floats they run at the same
-speed.
-
-AMD Ryzen 9 9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against
-clang 22.1.8 `-O3`, measured while other builds ran on the machine.
+`zig build test` runs 365 tests. 184 run the original beside the port on
+the same inputs and compare every output byte and returned value; 129 are
+the original's own test suite, run against the port; 52 test the port
+alone. The inputs are the original's demo mesh, generated meshes, hand-made
+edge cases, malformed encoded data and seeded fuzzing, with 1,000 cases or
+more per fuzz test.
 
 - [`doc/TESTING.md`](doc/TESTING.md): how the tests compare the port with
   the original, and what this repository's tests cover.
-- [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): ratios and full tables: every case's time, the flags
-  on both sides, the biases and the command.
+- [`doc/parity.md`](doc/parity.md): where the port differs from the
+  original, and why.
 
-## Licence and references
+## Speed
 
-MIT licence, the original's ([`LICENSE.md`](LICENSE.md)). The original's
-copyright notice is kept in `LICENSE.md` as it is: "Copyright (c)
-2016-2026 Arseny Kapoulkine". `src/cosf.zig` and `src/log2f.zig` are
-translated from Arm's optimized-routines and used under the MIT licence;
-its text and Arm's copyright notices are in `LICENSE.md` too. The tests
-use the original's demo mesh, Pirate by Clint Bellanger (CC-BY-SA 3.0),
-which is not part of the package.
+Port time against original time, one core, on a generated sphere of about a
+million triangles:
+
+| feature | time, port / original | port vs original |
+| --- | ---: | ---: |
+| `generateVertexRemap` | 0.95 | 5% faster |
+| `optimizeVertexCache` | 0.99 | 1% faster |
+| `buildMeshlets` | 0.77 | 23% faster |
+| `simplify` | 1.07 | 7% slower |
+| `decodeVertexBuffer`, v1 level 2 | 1.03 | 3% slower |
+
+Over all 218 benchmark cases, the port's time is at most 5% above the
+original's in 192. The slowest are `quantizeUnorm` and `quantizeSnorm`
+called on one float at a time in a loop (4.85 and 5.12, about 5 times the
+original's time), which Zig does not vectorize; called on vectors of 16
+floats they take the original's time.
+
+AMD Ryzen 9 9950X3D, one core, Linux 7.3.3, Zig 0.17.0 ReleaseFast against
+clang 22.1.8 `-O3`, at commit `a57cfbb`; each row the median of three runs'
+medians; other builds ran on the other half of the processor.
+
+- [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): every case, the flags on both
+  sides, the biases and the command.
+
+## Licence
+
+MIT licence, the original's ([`LICENSE.md`](LICENSE.md)). zig-meshoptimizer
+is an altered version of meshoptimizer: the code is rewritten in Zig, with
+its own interface. The original's notice, "Copyright (c) 2016-2026 Arseny
+Kapoulkine", is kept in `LICENSE.md` as it is, beside "Copyright (c) 2026
+Farhollow Games". `src/cosf.zig` and `src/log2f.zig` are translated from
+Arm's optimized-routines and used under the MIT licence; its text and Arm's
+copyright notices are in `LICENSE.md` too. The tests use the original's
+demo mesh, Pirate by Clint Bellanger (CC-BY-SA 3.0), which is not part of
+the package.
+
+## References
 
 - [meshoptimizer](https://github.com/zeux/meshoptimizer), the original, by
-  [Arseny Kapoulkine](https://github.com/zeux), and its
-  [documentation](https://meshoptimizer.org).
+  [Arseny Kapoulkine](https://github.com/zeux), tag `v1.3` (`f0a684f`),
+  fetched as a lazy dependency for the tests and the benchmark only, and
+  its [documentation](https://meshoptimizer.org).
 - [optimized-routines](https://github.com/ARM-software/optimized-routines),
-  Arm's maths routines, which glibc's `cosf` and `log2f` and the port's
-  are built from.
-- The papers each part builds on are named in the doc comment at the top
-  of its file in [`src/`](src): among them Forsyth's linear-speed vertex
-  cache optimisation, Sander, Nehab and Barczak's triangle reordering for
-  vertex locality and overdraw, and Garland and Heckbert's quadric error
-  metrics.
+  Arm's maths routines, which glibc's `cosf` and `log2f` and the port's are
+  built from.
+- The papers each part builds on are named in the doc comment at the top of
+  its file in [`src/`](src): among them Forsyth's linear-speed vertex cache
+  optimisation, Sander, Nehab and Barczak's triangle reordering for vertex
+  locality and overdraw, and Garland and Heckbert's quadric error metrics.
 
 Made by Farhollow Games for the Loomwork Engine.
